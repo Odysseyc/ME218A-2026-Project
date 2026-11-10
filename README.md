@@ -92,8 +92,8 @@ hardware/           KiCad schematic and BOM
 | `main` | everyone, through pull requests | Always builds. Shared files only | `ES_Configure.h`, `main.c`, this README |
 | `game-logic` | Adam | Game state machine, random LED choice, hall sensor and button checkers | `GameService`, `EventCheckers` |
 | `actuators` | Christopher | Potentiometer, plate servo, TREAT dispenser, buzzer, telling the game when the food reaches an LED | `ActuatorService` |
-| `led-matrix-display` | TBD | LED matrix: cooked level and game clock | `LEDMatrixService` plus the SPI and matrix HAL files |
-| `display-chain` | TBD | The 4 plate LEDs and the timer-button LEDs through the shift registers | `DisplayChainService` |
+| `led-matrix-display` | Jeremy | LED matrix: cooked level and game clock | `LEDMatrixService` plus the SPI and matrix HAL files |
+| `display-chain` | Alison | The 4 plate LEDs and the timer-button LEDs through the shift registers | `DisplayChainService` |
 
 ## How we use Git
 
