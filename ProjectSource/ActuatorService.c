@@ -3,7 +3,7 @@
    ActuatorService.c
 
  Description
-   Samples the potentiometer, drives the plate servo, detects ES_FOOD_PASSED and ES_TOO_FAST, runs the TREAT dispenser servo and the buzzer ding.
+   Samples the potentiometer, drives the plate servo, detects when the food reaches a plate LED (posts ES_FOOD_PASSED with the LED number), runs the TREAT dispenser servo and the buzzer ding.
 
  Notes
    STUB created on main so every branch builds against the same service list.

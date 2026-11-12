@@ -270,10 +270,10 @@ typedef enum
   ES_NEW_KEY,               /* signals a new key received from terminal */
 
   /* ---- Game events (see Checkpoint 1 state diagram) ---- */
-  ES_FOOD_REMOVED,          /* food/plate at the start position: Welcome -> Select Time. Posted by Check4FoodRemoved */
+  ES_FOOD_REMOVED,          /* food lifted off the start position (starts a game from Welcome). Posted by Check4FoodSensor */
+  ES_FOOD_PLACED,           /* food put back on the start position. Posted by Check4FoodSensor */
   ES_TIME_SELECTED,         /* a cook-time button was pressed. Param = seconds (30, 45 or 60). Posted by Check4TimeButtons */
   ES_FOOD_PASSED,           /* food passed an LED. Param = LED index. Posted by ActuatorService to GameService */
-  ES_TOO_FAST,              /* plate spun too fast. Posted by ActuatorService to GameService */
   ES_COOKED,                /* every LED dimmed. Posted by GameService to itself */
   ES_GAME_CLOCK_ELAPSED,    /* game clock ran out. Posted by GameService to itself */
 
@@ -287,6 +287,7 @@ typedef enum
   ES_CHAIN_SET_ALL,         /* Param = brightness 0 to 255 for every plate LED */
   ES_CHAIN_SET_LED,         /* Param = (LED index << 8) | brightness */
   ES_CHAIN_FLASH_TIME_LEDS, /* flash the LEDs by the timer buttons. Param = 1 start, 0 stop */
+  ES_CHAIN_SET_START_LEDS,   /* the 4 LEDs around the food's start position. Param = 1 on (put the food back), 0 off */
 
   /* ---- Commands from GameService to the actuators (ActuatorService) ---- */
   ES_PLATE_START,           /* start rotating the plate under potentiometer control */
@@ -327,7 +328,7 @@ typedef enum
 
 /****************************************************************************/
 // This is the list of event checking functions
-#define EVENT_CHECK_LIST Check4Keystroke, Check4FoodRemoved, Check4TimeButtons
+#define EVENT_CHECK_LIST Check4Keystroke, Check4FoodSensor, Check4TimeButtons
 
 /****************************************************************************/
 // These are the definitions for the post functions to be executed when the
@@ -343,7 +344,7 @@ typedef enum
 #define TIMER4_RESP_FUNC PostDisplayChainService
 #define TIMER5_RESP_FUNC PostActuatorService
 #define TIMER6_RESP_FUNC PostActuatorService
-#define TIMER7_RESP_FUNC TIMER_UNUSED
+#define TIMER7_RESP_FUNC PostGameService
 #define TIMER8_RESP_FUNC TIMER_UNUSED
 #define TIMER9_RESP_FUNC TIMER_UNUSED
 #define TIMER10_RESP_FUNC TIMER_UNUSED
@@ -367,7 +368,11 @@ typedef enum
 #define CHAIN_TIMER           4     /* DisplayChainService: flashing / brightness refresh */
 #define PLATE_SAMPLE_TIMER    5     /* ActuatorService: potentiometer sampling */
 #define SERVO_TIMER           6     /* ActuatorService: dispenser and ding durations */
-/* timers 7 to 15 are free: claim one with a small pull request to main */
+#define LED_ON_TIMER          7     /* GameService: how long a plate LED stays lit */
+/* timers 8 to 15 are free: claim one with a small pull request to main */
+
+/* number of LED hits that fill the cooked-level display (shared by GameService and LEDMatrixService) */
+#define MATRIX_MAX_COOKED_LEVEL 8
 
 
 #endif /* ES_CONFIGURE_H */
