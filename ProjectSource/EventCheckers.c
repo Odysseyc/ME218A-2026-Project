@@ -119,93 +119,26 @@ bool Check4Keystroke(void)
   return false;
 }
 
-/***************************************************************************
- Input helpers: the pins are not assigned yet. When the pin map in the README
- is filled in, set up the pins (TRIS / ANSEL) and read them in these two
- functions. Nothing else in this file has to change.
-***************************************************************************/
-#define DEBOUNCE_MS             20
-
-// true when the hall sensor sees the food at the start position
-static bool readFoodSensor(void)
-{
-  return false;   // TODO: read the hall sensor pin
-}
-
-// bit 0 = time button 1, bit 1 = button 2, bit 2 = button 3; 1 = pressed
-static uint8_t readTimeButtons(void)
-{
-  return 0;       // TODO: read the three button pins
-}
-
 /****************************************************************************
  Function
    Check4FoodSensor
  Description
-   Watches the hall sensor at the food's start position. Posts
-   ES_FOOD_REMOVED to GameService when the food is lifted off, and
-   ES_FOOD_PLACED when it is put back. Owner: game-logic.
+   STUB. The game-logic branch fills this in: post ES_FOOD_REMOVED when the
+   food is lifted off its start position and ES_FOOD_PLACED when it is put back.
 ****************************************************************************/
 bool Check4FoodSensor(void)
 {
-  static bool Initialized = false;
-  static bool LastFoodPresent = false;
-  bool FoodPresent = readFoodSensor();
-  ES_Event_t ThisEvent;
-
-  if (!Initialized)
-  {
-    LastFoodPresent = FoodPresent;      // ignore whatever state we power up in
-    Initialized = true;
-    return false;
-  }
-
-  if (FoodPresent == LastFoodPresent)
-  {
-    return false;
-  }
-
-  LastFoodPresent = FoodPresent;
-  ThisEvent.EventType = FoodPresent ? ES_FOOD_PLACED : ES_FOOD_REMOVED;
-  ThisEvent.EventParam = 0;
-  PostGameService(ThisEvent);
-  return true;
+  return false;
 }
 
 /****************************************************************************
  Function
    Check4TimeButtons
  Description
-   Debounces the three time buttons and posts ES_TIME_SELECTED to GameService
-   with EventParam = the button number (1, 2 or 3). That number is also the
-   difficulty. Owner: game-logic.
+   STUB. The game-logic branch fills this in: post ES_TIME_SELECTED
+   (EventParam = button number 1, 2 or 3) when a time button is pressed.
 ****************************************************************************/
 bool Check4TimeButtons(void)
 {
-  static uint8_t LastReading = 0;
-  static uint8_t StableState = 0;
-  static uint16_t LastChangeTime = 0;
-  uint8_t Reading = readTimeButtons();
-  uint16_t Now = ES_Timer_GetTime();
-  bool ReturnVal = false;
-
-  if (Reading != LastReading)
-  {
-    LastReading = Reading;
-    LastChangeTime = Now;
-  }
-  else if ((Reading != StableState) && ((uint16_t)(Now - LastChangeTime) >= DEBOUNCE_MS))
-  {
-    uint8_t NewlyPressed = Reading & (uint8_t)(~StableState);
-    StableState = Reading;
-    if (NewlyPressed)
-    {
-      ES_Event_t ThisEvent;
-      ThisEvent.EventType = ES_TIME_SELECTED;
-      ThisEvent.EventParam = (NewlyPressed & 0x01) ? 1 : ((NewlyPressed & 0x02) ? 2 : 3);
-      PostGameService(ThisEvent);
-      ReturnVal = true;
-    }
-  }
-  return ReturnVal;
+  return false;
 }

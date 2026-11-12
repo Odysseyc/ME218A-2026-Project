@@ -37,18 +37,7 @@ What happens when the player misses an LED (it turns off before they reach it) i
 
 Four services, each owned by one teammate. `GameService` makes all the decisions and tells the others what to show or move.
 
-```
-hall sensor, buttons ---> GameService (the game rules)
-                              |        |        |
-                              v        v        v
-                    LEDMatrixService  DisplayChainService  ActuatorService
-                    cooked level,     plate LEDs, timer    plate servo, ding,
-                    game clock        LEDs, start LEDs     TREAT dispenser
-                                                               |
-                          potentiometer ---------------------->|
-                              GameService <--- ES_FOOD_PASSED -+
-                              (the plate reached an LED)
-```
+![System overview: GameService sends commands to the LED matrix, plate LED chain and actuator services](docs/system_overview.png)
 
 ### Game states
 
