@@ -71,7 +71,7 @@
 // the name of the run function
 #define SERV_1_RUN RunLEDMatrixService
 // How big should this services Queue be?
-#define SERV_1_QUEUE_SIZE 8
+#define SERV_1_QUEUE_SIZE 10
 #endif
 
 /****************************************************************************/
@@ -281,6 +281,7 @@ typedef enum
   ES_MATRIX_CLEAR,          /* blank the matrix. Param unused */
   ES_MATRIX_SET_COOKED,     /* show the cooked level. Param = level, 0 (lowest) to MATRIX_MAX_COOKED_LEVEL */
   ES_MATRIX_SHOW_CLOCK,     /* show elapsed game time. Param = seconds elapsed */
+  ES_MATRIX_SHOW_MSG,       /* show a message on the timer display. Param = DisplayMsg_t (LEDMatrixService.h) */
   ES_MATRIX_STEP_DONE,      /* internal to LEDMatrixService: one display step finished, do the next */
 
   /* ---- Commands from GameService to the plate LED chain (DisplayChainService) ---- */
@@ -328,7 +329,7 @@ typedef enum
 
 /****************************************************************************/
 // This is the list of event checking functions
-#define EVENT_CHECK_LIST Check4Keystroke, Check4FoodSensor, Check4TimeButtons
+#define EVENT_CHECK_LIST Check4Keystroke, Check4FoodSensor, Check4TimeButtons, Check4PlateHalls
 
 /****************************************************************************/
 // These are the definitions for the post functions to be executed when the
