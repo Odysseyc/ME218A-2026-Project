@@ -16,8 +16,10 @@
 
    Keys: a starts, j selects forward, k selects reverse, x/Escape stops.
    Direction changes take effect while running; ? shows the current state.
-   PIC pins: 2/RA0 -> IN3, 3/RA1 -> IN4, 26/RB15 -> ENB, 22/RB11 -> ENA.
-   RA0/RA1 overlap the planned SPI display; reassign before integration.
+   PIC pins: 9/RA2 -> IN3, 10/RA3 -> IN4, 26/RB15 -> ENB, 22/RB11 -> ENA.
+   (IN3/IN4 moved from RA0/RA1 at integration: those are the South and West
+   Hall sensor inputs. RA2/RA3 are free because the PIC runs on its internal
+   oscillator.)
    Channel A stays off. There is no automatic motor cutoff in manual mode.
 
  History
@@ -25,6 +27,7 @@
  -------------- ---     --------
  11/09/26       ---     stub
  11/12/26       ---     continuous start/stop control and direction selection
+ 11/13/26       ---     integration: IN3/IN4 moved to RA2/RA3
 ****************************************************************************/
 /*----------------------------- Include Files -----------------------------*/
 #include "../ProjectHeaders/ActuatorService.h"
@@ -66,10 +69,8 @@ bool InitActuatorService(uint8_t Priority)
   ANSELBbits.ANSB15 = 0;
   TRISBbits.TRISB15 = 0;
   TRISBbits.TRISB11 = 0;
-  ANSELAbits.ANSA0 = 0;
-  ANSELAbits.ANSA1 = 0;
-  TRISAbits.TRISA0 = 0;
-  TRISAbits.TRISA1 = 0;
+  TRISAbits.TRISA2 = 0;               // RA2 / RA3 have no analog function
+  TRISAbits.TRISA3 = 0;
 
   return ES_PostToService(MyPriority, ThisEvent);
 }
@@ -157,8 +158,8 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
 static void ApplyMotorOutput(void)
 {
   LATBCLR = BOTH_ENABLES;
-  LATAbits.LATA0 = SelectedDirection == Forward;
-  LATAbits.LATA1 = SelectedDirection == Reverse;
+  LATAbits.LATA2 = SelectedDirection == Forward;
+  LATAbits.LATA3 = SelectedDirection == Reverse;
   if (MotorRunning)
     LATBSET = PLATE_ENABLE;
 }
