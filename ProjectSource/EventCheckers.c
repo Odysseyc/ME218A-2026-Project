@@ -39,6 +39,8 @@
 // include our own prototypes to insure consistency between header &
 // actual functionsdefinition
 #include "EventCheckers.h"
+#include "AnalogInputs.h"
+#include <xc.h>
 
 // This is the event checking function sample. It is not intended to be
 // included in the module. It is only here as a sample to guide you in writing
@@ -120,22 +122,35 @@ bool Check4Keystroke(void)
 }
 
 /***************************************************************************
- Input helpers: the pins are not assigned yet. When the pin map in the README
- is filled in, set up the pins (TRIS / ANSEL) and read them in these two
- functions. Nothing else in this file has to change.
+ Input helpers (pins from the schematic)
+   30s button RA2 (pin 9), 45s button RA3 (pin 10), 60s button RA4 (pin 12).
+   Each button connects its pin to ground, so the internal pull-ups are on
+   and a pressed button reads 0.
+   The food start-spot Hall sensor (RB13 / AN11) is read in AnalogInputs.c.
 ***************************************************************************/
 #define DEBOUNCE_MS             20
+#define BUTTON_PINS             ((1u << 2) | (1u << 3) | (1u << 4))   // RA2, RA3, RA4
+
+void InitTimeButtons(void)
+{
+  TRISASET = BUTTON_PINS;         // inputs (RA2 to RA4 have no analog function)
+  CNPUASET = BUTTON_PINS;         // pull-ups
+}
 
 // true when the hall sensor sees the food at the start position
 static bool readFoodSensor(void)
 {
-  return false;   // TODO: read the hall sensor pin
+  return IsFoodAtStart();
 }
 
 // bit 0 = time button 1, bit 1 = button 2, bit 2 = button 3; 1 = pressed
 static uint8_t readTimeButtons(void)
 {
-  return 0;       // TODO: read the three button pins
+  uint8_t Pressed = 0;
+  if (!PORTAbits.RA2) Pressed |= 0x01;   // 30 s
+  if (!PORTAbits.RA3) Pressed |= 0x02;   // 45 s
+  if (!PORTAbits.RA4) Pressed |= 0x04;   // 60 s
+  return Pressed;
 }
 
 /****************************************************************************

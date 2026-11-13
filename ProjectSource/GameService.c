@@ -10,14 +10,14 @@
 
    States: Welcome, SelectTime, Cooking, Won, Lost, ReturnFood
 
-   After a game ends (or is abandoned) the 4 LEDs around the food's start
+   After a game ends (or is abandoned) the 5 LEDs around the food's start
    position light up if the food is not back there yet (ReturnFood). Nothing
    starts until the food is put back (ES_FOOD_PLACED) and then lifted off
    again (ES_FOOD_REMOVED).
 
  Notes
    Owner: Adam. Plate LED timing per difficulty from Jeremy's plate code.
-   The Hall sensors (HallSensors.c) post ES_FOOD_PASSED and the 595 code is
+   The Hall sensors (AnalogInputs.c) post ES_FOOD_PASSED and the 595 code is
    in DisplayChainService.c.
    With KEYBOARD_SIMULATION set to 1 the state machine can be driven from the
    terminal (needed for Checkpoint 2):
@@ -332,7 +332,7 @@ static void enterWelcome(void)
 }
 
 // the game is over but the food is not back at its start position yet:
-// light the 4 LEDs around that spot and wait for the food to be put back
+// light the 5 LEDs around that spot and wait for the food to be put back
 static void enterReturnFood(void)
 {
   stopGameTimers();

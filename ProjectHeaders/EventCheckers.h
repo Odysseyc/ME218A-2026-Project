@@ -24,5 +24,6 @@
 bool Check4Keystroke(void);
 bool Check4FoodSensor(void);    // hall sensor at the food start position (game-logic branch)
 bool Check4TimeButtons(void);   // 30 / 45 / 60 second buttons (game-logic branch)
+void InitTimeButtons(void);     // call once from main(): button pins and pull-ups
 
 #endif /* EventCheckers_H */

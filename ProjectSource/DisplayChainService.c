@@ -3,28 +3,26 @@
    DisplayChainService.c
 
  Description
-   Drives the plate LEDs through the 74HC595 shift register. GameService
-   tells it which LEDs to light; this service turns that into the 8 bits the
-   595 holds and shifts them out.
+   Drives the two chained 74HC595 shift registers (schematic: LEDS). They hold
+   the plate LEDs, the time-button LEDs, the 5 food start-spot LEDs and the
+   buzzer ("Bell"). GameService and ActuatorService say what should be on;
+   this service turns that into 16 bits and shifts them out.
 
  Notes
    Owner: Jeremy (595 code first written in GameService.c on the game-logic
    branch). Moved here during integration.
 
-   Pins:  RB8 -> 595 pin 14 (SER, data)
-          RB9 -> 595 pin 11 (SRCLK, shift clock)
-          RB10 -> 595 pin 12 (RCLK, latch)
+   Pins (schematic):  RB8  LED Data  -> first 595 SER (pin 14)
+                      RB9  LED SRCLK -> both 595 SRCLK (pin 11)
+                      RB10 LED RCLK  -> both 595 RCLK (pin 12)
+   The first 595's QH' feeds the second 595's SER (LED Data In 2).
 
-   595 bit (sent most significant first) for each plate LED:
-          LED 0 North = bit 1, LED 1 East = bit 2,
-          LED 2 South = bit 3, LED 3 West = bit 4
-   Bits 0, 5, 6 and 7 are free for the start-position LEDs, the time-button
-   LEDs or a second 595 later.
+   First 595:  QA Bell (buzzer)   QB LED North   QC LED East   QD LED South
+               QE LED West        QF 30s button  QG 45s button QH 60s button
+   Second 595: QA to QE  LED Food Start 1 to 5  (QF to QH not connected)
 
-   Not done yet: dimming (brightness is only on or off for now), flashing the
-   time-button LEDs (ES_CHAIN_FLASH_TIME_LEDS) and the 4 start-position LEDs
-   (ES_CHAIN_SET_START_LEDS). Their requests are remembered so the hardware
-   can be added without changing GameService.
+   Plate LED n (0 = North ... 3 = West) is first-595 bit n + 1.
+   Brightness is on or off for now (no dimming yet).
 
  History
  When           Who     What/Why
@@ -32,6 +30,8 @@
  11/09/26       ---     stub
  11/11/26       Jeremy  595 shifting and plate LED bits
  11/13/26       ---     moved out of GameService into this service
+ 11/13/26       ---     both 595s per the schematic: bell, time-button
+                        and start-spot LEDs
 ****************************************************************************/
 /*----------------------------- Include Files -----------------------------*/
 #include "../ProjectHeaders/DisplayChainService.h"
@@ -43,6 +43,7 @@
 #include "ES_Port.h"
 #include "terminal.h"
 #include "dbprintf.h"
+#include "ES_Timers.h"
 
 /*----------------------------- Module Defines ----------------------------*/
 #define SR_DATA   (1u << 8)     // RB8  -> 595 pin 14
@@ -50,18 +51,24 @@
 #define SR_LATCH  (1u << 10)    // RB10 -> 595 pin 12
 
 #define NUM_PLATE_LEDS   4
-#define PLATE_LED_BIT(n) ((uint8_t)(1u << ((n) + 1u)))
+#define BELL_BIT         0x01u                    // first 595 QA
+#define PLATE_LED_BIT(n) ((uint8_t)(1u << ((n) + 1u)))   // QB to QE
 #define ALL_PLATE_LEDS   (PLATE_LED_BIT(0) | PLATE_LED_BIT(1) | PLATE_LED_BIT(2) | PLATE_LED_BIT(3))
+#define TIME_LED_BITS    0xE0u                    // first 595 QF, QG, QH
+#define START_LED_BITS   0x1Fu                    // second 595 QA to QE
+
+#define FLASH_MS         250                      // time-button LED flash rate
 
 /*---------------------------- Module Functions ---------------------------*/
-static void send595(uint8_t Bits);
+static void sendChain(void);
+static void shiftByte(uint8_t Bits);
 static void pinDelay(void);
 
 /*---------------------------- Module Variables ---------------------------*/
 static uint8_t MyPriority;
-static uint8_t ChainBits = 0;           // what the 595 is showing
-static bool StartLEDsOn = false;        // requested, no hardware yet
-static bool FlashTimeLEDs = false;      // requested, no hardware yet
+static uint8_t FirstBits = 0;           // first 595 (bell, plate, time LEDs)
+static uint8_t SecondBits = 0;          // second 595 (start-spot LEDs)
+static bool Flashing = false;
 
 /*------------------------------ Module Code ------------------------------*/
 bool InitDisplayChainService(uint8_t Priority)
@@ -73,8 +80,9 @@ bool InitDisplayChainService(uint8_t Priority)
   // the three 595 lines are digital outputs, starting low
   LATBCLR  = SR_DATA | SR_CLOCK | SR_LATCH;
   TRISBCLR = SR_DATA | SR_CLOCK | SR_LATCH;
-  ChainBits = 0;
-  send595(ChainBits);                   // start with the plate dark
+  FirstBits = 0;
+  SecondBits = 0;
+  sendChain();                          // start with everything off
 
   ThisEvent.EventType = ES_INIT;
   return ES_PostToService(MyPriority, ThisEvent);
@@ -107,13 +115,13 @@ ES_Event_t RunDisplayChainService(ES_Event_t ThisEvent)
       {
         if (Brightness > 0)
         {
-          ChainBits |= PLATE_LED_BIT(Index);
+          FirstBits |= PLATE_LED_BIT(Index);
         }
         else
         {
-          ChainBits &= (uint8_t)~PLATE_LED_BIT(Index);
+          FirstBits &= (uint8_t)~PLATE_LED_BIT(Index);
         }
-        send595(ChainBits);
+        sendChain();
       }
     }
     break;
@@ -122,25 +130,70 @@ ES_Event_t RunDisplayChainService(ES_Event_t ThisEvent)
     {
       if (ThisEvent.EventParam > 0)
       {
-        ChainBits |= ALL_PLATE_LEDS;
+        FirstBits |= ALL_PLATE_LEDS;
       }
       else
       {
-        ChainBits &= (uint8_t)~ALL_PLATE_LEDS;
+        FirstBits &= (uint8_t)~ALL_PLATE_LEDS;
       }
-      send595(ChainBits);
+      sendChain();
     }
     break;
 
     case ES_CHAIN_SET_START_LEDS:
     {
-      StartLEDsOn = (ThisEvent.EventParam != 0);   // TODO: wire to a 595 bit
+      if (ThisEvent.EventParam != 0)
+      {
+        SecondBits |= START_LED_BITS;
+      }
+      else
+      {
+        SecondBits &= (uint8_t)~START_LED_BITS;
+      }
+      sendChain();
     }
     break;
 
     case ES_CHAIN_FLASH_TIME_LEDS:
     {
-      FlashTimeLEDs = (ThisEvent.EventParam != 0); // TODO: flash with CHAIN_TIMER
+      Flashing = (ThisEvent.EventParam != 0);
+      FirstBits &= (uint8_t)~TIME_LED_BITS;
+      if (Flashing)
+      {
+        FirstBits |= TIME_LED_BITS;     // start with them on
+        ES_Timer_InitTimer(CHAIN_TIMER, FLASH_MS);
+      }
+      else
+      {
+        ES_Timer_StopTimer(CHAIN_TIMER);
+      }
+      sendChain();
+    }
+    break;
+
+    case ES_TIMEOUT:
+    {
+      if ((CHAIN_TIMER == ThisEvent.EventParam) && Flashing)
+      {
+        FirstBits ^= TIME_LED_BITS;
+        sendChain();
+        ES_Timer_InitTimer(CHAIN_TIMER, FLASH_MS);
+      }
+    }
+    break;
+
+    case ES_CHAIN_SET_BELL:
+    {
+      // Param = 1 buzzer on, 0 off. ActuatorService times the ding.
+      if (ThisEvent.EventParam != 0)
+      {
+        FirstBits |= BELL_BIT;
+      }
+      else
+      {
+        FirstBits &= (uint8_t)~BELL_BIT;
+      }
+      sendChain();
     }
     break;
 
@@ -155,11 +208,23 @@ ES_Event_t RunDisplayChainService(ES_Event_t ThisEvent)
 /***************************************************************************
  private functions
  ***************************************************************************/
-// Shifts 8 bits into the 595 (most significant first) and latches them.
+// Sends all 16 bits and latches them. The second 595's byte goes first,
+// because it has to pass through the first 595 to get there. Each byte is
+// sent most significant bit first, so bit 7 ends up on QH and bit 0 on QA.
 // Takes a few microseconds, so it is done all at once.
-static void send595(uint8_t Bits)
+static void sendChain(void)
 {
   LATBCLR = SR_LATCH;
+  shiftByte(SecondBits);
+  shiftByte(FirstBits);
+  LATBCLR = SR_CLOCK;
+  LATBSET = SR_LATCH;                   // show the new bits on the outputs
+  pinDelay();
+  LATBCLR = SR_LATCH;
+}
+
+static void shiftByte(uint8_t Bits)
+{
   for (uint8_t Mask = 0x80; Mask != 0; Mask >>= 1)
   {
     LATBCLR = SR_CLOCK;
@@ -175,10 +240,6 @@ static void send595(uint8_t Bits)
     LATBSET = SR_CLOCK;                 // the 595 reads the data on this edge
     pinDelay();
   }
-  LATBCLR = SR_CLOCK;
-  LATBSET = SR_LATCH;                   // show the new bits on the outputs
-  pinDelay();
-  LATBCLR = SR_LATCH;
 }
 
 // a short pause so each 595 pulse is long enough

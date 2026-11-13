@@ -15,7 +15,8 @@
 #include "ES_Framework.h"
 #include "ES_Port.h"
 #include "dbprintf.h"
-#include "HallSensors.h"
+#include "AnalogInputs.h"
+#include "EventCheckers.h"
 #include <xc.h>
 
 
@@ -27,7 +28,8 @@ void main(void)
 
   _HW_PIC32Init(); // basic PIC hardware init
   // Your hardware initialization function calls go here
-  InitHallSensors();
+  InitAnalogInputs();   // Hall sensors and pot
+  InitTimeButtons();
 
   // now initialize the Events and Services Framework and start it running
   ErrorType = ES_Initialize(ES_Timer_RATE_1mS);

@@ -288,7 +288,8 @@ typedef enum
   ES_CHAIN_SET_ALL,         /* Param = brightness 0 to 255 for every plate LED */
   ES_CHAIN_SET_LED,         /* Param = (LED index << 8) | brightness */
   ES_CHAIN_FLASH_TIME_LEDS, /* flash the LEDs by the timer buttons. Param = 1 start, 0 stop */
-  ES_CHAIN_SET_START_LEDS,   /* the 4 LEDs around the food's start position. Param = 1 on (put the food back), 0 off */
+  ES_CHAIN_SET_START_LEDS,   /* the 5 LEDs around the food's start position. Param = 1 on (put the food back), 0 off */
+  ES_CHAIN_SET_BELL,        /* buzzer on the 595 chain. Param = 1 on, 0 off. Posted by ActuatorService */
 
   /* ---- Commands from GameService to the actuators (ActuatorService) ---- */
   ES_PLATE_START,           /* start rotating the plate under potentiometer control */
@@ -346,7 +347,7 @@ typedef enum
 #define TIMER5_RESP_FUNC PostActuatorService
 #define TIMER6_RESP_FUNC PostActuatorService
 #define TIMER7_RESP_FUNC PostGameService
-#define TIMER8_RESP_FUNC TIMER_UNUSED
+#define TIMER8_RESP_FUNC PostActuatorService
 #define TIMER9_RESP_FUNC TIMER_UNUSED
 #define TIMER10_RESP_FUNC TIMER_UNUSED
 #define TIMER11_RESP_FUNC TIMER_UNUSED
@@ -370,7 +371,8 @@ typedef enum
 #define PLATE_SAMPLE_TIMER    5     /* ActuatorService: potentiometer sampling */
 #define SERVO_TIMER           6     /* ActuatorService: dispenser and ding durations */
 #define LED_ON_TIMER          7     /* GameService: how long a plate LED stays lit */
-/* timers 8 to 15 are free: claim one with a small pull request to main */
+#define DING_TIMER            8     /* ActuatorService: how long the buzzer sounds */
+/* timers 9 to 15 are free: claim one with a small pull request to main */
 
 /* number of LED hits that fill the cooked-level display (shared by GameService and LEDMatrixService) */
 #define MATRIX_MAX_COOKED_LEVEL 8

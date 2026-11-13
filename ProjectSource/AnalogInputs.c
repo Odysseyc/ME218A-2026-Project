@@ -1,12 +1,16 @@
 /****************************************************************************
  Module
-   HallSensors.c
+   AnalogInputs.c
 
  Description
-   Reads the 4 Hall sensors at the plate LEDs (North, East, South, West) one
-   at a time with the ADC, and posts ES_FOOD_PASSED to GameService when the
-   magnet under the food arrives at one of them. GameService decides whether
-   that was the lit LED (a hit) or not.
+   Reads every analog input on the schematic, one channel at a time with the
+   ADC: the 4 Hall sensors at the plate LEDs (North, East, South, West), the
+   Hall sensor at the food's start spot and the potentiometer.
+
+   Posts ES_FOOD_PASSED to GameService when the magnet under the food is at a
+   plate Hall sensor. GameService decides whether that was the lit LED (a
+   hit) or not. Check4FoodSensor uses IsFoodAtStart() and ActuatorService
+   uses GetPotReading().
 
    At power-up it measures each sensor's resting value (baseline). If one
    sensor reads very differently from the other three (the magnet is sitting
@@ -14,14 +18,18 @@
    readings are unclear it measures again.
 
  Notes
-   Owner: Jeremy (hall / plate LED code, first written in GameService.c on
-   the game-logic branch). Moved here during integration so GameService only
-   makes game decisions.
+   Owner: Jeremy (Hall code, first written in GameService.c on the
+   game-logic branch). Moved here during integration so GameService only
+   makes game decisions. The pot reading is here because there is one ADC.
 
-   Pins:  North RB2 / AN4   East RB3 / AN5   South RA0 / AN0   West RA1 / AN1
-   The terminal uses RB6 / RB7, so RB2 / RB3 are free for analog input.
+   Pins (schematic):  North RB2 / AN4   East RB3 / AN5   South RA0 / AN0
+                      West RA1 / AN1    Food Start RB13 / AN11
+                      Pot Wiper RB12 / AN12
 
-   Each sensor is read every 4 x POLL_MS = 20 ms. Nothing here blocks.
+   Each channel is read every 6 x POLL_MS = 30 ms. Nothing here blocks.
+   The food-start sensor can't be measured at rest at power-up (the food is
+   sitting on it), so its baseline is the average of the 4 plate baselines.
+   That assumes all 5 Hall sensors are the same part.
    While the magnet stays at a sensor the event is repeated every REPEAT_MS,
    so an LED that lights up right where the food is parked still counts.
 
@@ -30,9 +38,10 @@
  -------------- ---     --------
  11/11/26       Jeremy  Hall sampling, calibration, hit detection
  11/13/26       ---     moved out of GameService into its own module
+ 11/13/26       ---     added food-start Hall and pot (schematic pins)
 ****************************************************************************/
 /*----------------------------- Include Files -----------------------------*/
-#include "../ProjectHeaders/HallSensors.h"
+#include "../ProjectHeaders/AnalogInputs.h"
 
 #include <xc.h>
 #include <stdlib.h>
@@ -44,7 +53,10 @@
 #include "GameService.h"
 
 /*----------------------------- Module Defines ----------------------------*/
-#define NUM_HALLS          4
+#define NUM_HALLS          4      // plate sensors, channels 0 to 3
+#define CH_FOOD_START      4
+#define CH_POT             5
+#define NUM_CHANNELS       6
 #define POLL_MS            5      // time between ADC readings
 #define CAL_SCANS          50u    // readings per sensor for the baseline
 #define DETECT_COUNTS      40     // change from baseline that means "magnet here"
@@ -62,8 +74,8 @@ static void finishCalibration(void);
 static int findStartupOutlier(const unsigned Mean[NUM_HALLS]);
 
 /*---------------------------- Module Variables ---------------------------*/
-// ADC channel for N, E, S, W
-static const uint8_t HallChannel[NUM_HALLS] = {4, 5, 0, 1};
+// ADC channel (ANx) for N, E, S, W, food start, pot
+static const uint8_t AdcChannel[NUM_CHANNELS] = {4, 5, 0, 1, 11, 12};
 
 static uint16_t Baseline[NUM_HALLS];
 static uint32_t HallSum[NUM_HALLS];
@@ -72,17 +84,20 @@ static bool HaveBaselines = false;
 static bool CalRetried = false;
 static uint16_t LastCalWarning;
 
-static uint8_t Direction;               // sensor being read now (0 to 3)
-static uint8_t ActiveMask;              // bit n set = magnet at sensor n
+static uint8_t Channel;                 // channel being read now (0 to 5)
+static uint8_t ActiveMask;              // bit n set = magnet at plate sensor n
+static uint16_t FoodStartBaseline;
+static bool FoodAtStart = true;
+static uint16_t PotReading = 512;
 static uint16_t LastPollTime;
 static uint16_t LastPostTime[NUM_HALLS];
 
 /*------------------------------ Module Code ------------------------------*/
-void InitHallSensors(void)
+void InitAnalogInputs(void)
 {
-  // North and East: RB2 / RB3 as analog inputs
-  TRISBSET  = (1u << 2) | (1u << 3);
-  ANSELBSET = (1u << 2) | (1u << 3);
+  // North, East (RB2, RB3), food start (RB13), pot (RB12) as analog inputs
+  TRISBSET  = (1u << 2) | (1u << 3) | (1u << 12) | (1u << 13);
+  ANSELBSET = (1u << 2) | (1u << 3) | (1u << 12) | (1u << 13);
   // South and West: RA0 / RA1 as analog inputs
   TRISASET  = (1u << 0) | (1u << 1);
   ANSELASET = (1u << 0) | (1u << 1);
@@ -102,7 +117,8 @@ void InitHallSensors(void)
     HallSum[i] = 0;
   }
   ActiveMask = 0;
-  Direction = 0;
+  Channel = 0;
+  FoodAtStart = true;
   CalRetried = false;
   SamplesLeft = NUM_HALLS * CAL_SCANS;
   LastPollTime = 0;
@@ -126,9 +142,28 @@ bool Check4PlateHalls(void)
 
   uint16_t Reading = (uint16_t)ADC1BUF0;
 
-  if (SamplesLeft > 0)
+  if (CH_POT == Channel)
   {
-    HallSum[Direction] += Reading;
+    PotReading = Reading;
+  }
+  else if (CH_FOOD_START == Channel)
+  {
+    if (HaveBaselines)
+    {
+      int Change = abs((int)Reading - (int)FoodStartBaseline);
+      if (Change >= DETECT_COUNTS)
+      {
+        FoodAtStart = true;
+      }
+      else if (Change <= RELEASE_COUNTS)
+      {
+        FoodAtStart = false;
+      }
+    }
+  }
+  else if (SamplesLeft > 0)
+  {
+    HallSum[Channel] += Reading;
     SamplesLeft--;
     if (0 == SamplesLeft)
     {
@@ -137,20 +172,20 @@ bool Check4PlateHalls(void)
   }
   else
   {
-    uint8_t Bit = (uint8_t)(1u << Direction);
-    int Change = abs((int)Reading - (int)Baseline[Direction]);
+    uint8_t Bit = (uint8_t)(1u << Channel);
+    int Change = abs((int)Reading - (int)Baseline[Channel]);
 
     bool Arrived = (Change >= DETECT_COUNTS) && !(ActiveMask & Bit);
     bool StillHere = (ActiveMask & Bit) && (Change > RELEASE_COUNTS) &&
-                     ((uint16_t)(Now - LastPostTime[Direction]) >= REPEAT_MS);
+                     ((uint16_t)(Now - LastPostTime[Channel]) >= REPEAT_MS);
 
     if (Arrived || StillHere)
     {
       ActiveMask |= Bit;
-      LastPostTime[Direction] = Now;
+      LastPostTime[Channel] = Now;
       ES_Event_t ThisEvent;
       ThisEvent.EventType = ES_FOOD_PASSED;
-      ThisEvent.EventParam = Direction;
+      ThisEvent.EventParam = Channel;
       PostGameService(ThisEvent);
       ReturnVal = true;
     }
@@ -160,9 +195,19 @@ bool Check4PlateHalls(void)
     }
   }
 
-  Direction = (uint8_t)((Direction + 1u) % NUM_HALLS);
+  Channel = (uint8_t)((Channel + 1u) % NUM_CHANNELS);
   startSample();
   return ReturnVal;
+}
+
+bool IsFoodAtStart(void)
+{
+  return FoodAtStart;
+}
+
+uint16_t GetPotReading(void)
+{
+  return PotReading;
 }
 
 /***************************************************************************
@@ -170,7 +215,7 @@ bool Check4PlateHalls(void)
  ***************************************************************************/
 static void startSample(void)
 {
-  AD1CHSbits.CH0SA = HallChannel[Direction];
+  AD1CHSbits.CH0SA = AdcChannel[Channel];
   AD1CON1bits.SAMP = 1;
 }
 
@@ -224,6 +269,7 @@ static void finishCalibration(void)
     }
     HaveBaselines = true;
   }
+  FoodStartBaseline = (uint16_t)(((uint32_t)Baseline[0] + Baseline[1] + Baseline[2] + Baseline[3] + 2u) / 4u);
 
   DB_printf("Hall baselines N/E/S/W %d %d %d %d (%s)\r\n",
             Baseline[0], Baseline[1], Baseline[2], Baseline[3], Source);

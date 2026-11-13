@@ -16,7 +16,7 @@ Team: Christopher Luey, Jeremy Merritt, Alison Peckham, Adam Sabet
 4. Turn the potentiometer to spin the plate until the food reaches that LED, before the LED turns off.
 5. When the food gets there, the LED goes off and the cooked-level display on the LED matrix fills up a bit. Then another random LED lights.
 6. Fill the matrix before the game clock runs out and you win: the microwave dings and a TREAT is dispensed. Run out of time and you lose.
-7. When the game ends, the 4 LEDs around the food's start spot light up. Put the food back to reset. The buttons do nothing until it's back.
+7. When the game ends, the 5 LEDs around the food's start spot light up. Put the food back to reset. The buttons do nothing until it's back.
 8. If nobody touches anything for 20 seconds, the game resets.
 
 What happens when the player misses an LED (it turns off before they reach it) isn't decided yet. Right now a new LED just lights.
@@ -29,7 +29,7 @@ What happens when the player misses an LED (it turns off before they reach it) i
 | Analog input | The potentiometer angle sets where the plate points |
 | Non-contact sensing | Hall sensors |
 | 3 or more kinds of feedback | LEDs and LED matrix, buzzer ding, plate servo, TREAT |
-| Moving parts | Motor-driven plate and a servo TREAT dispenser |
+| Moving parts | Servo-driven plate and a servo TREAT dispenser |
 | Time display | Game clock shown on the LED matrix |
 | 20 second timeout | Inactivity timer resets the game |
 
@@ -90,10 +90,12 @@ You receive:
 | `ES_CHAIN_SET_ALL` | brightness 0 to 255 | Set every plate LED |
 | `ES_CHAIN_SET_LED` | `(LED number << 8) \| brightness` | Set one plate LED. Numbers 0 to 3 are the plate LEDs. Brightness 0 is off |
 | `ES_CHAIN_FLASH_TIME_LEDS` | 1 start, 0 stop | Flash the 3 LEDs next to the time buttons |
-| `ES_CHAIN_SET_START_LEDS` | 1 on, 0 off | Light the 4 LEDs around the food's start spot ("put the food back") |
+| `ES_CHAIN_SET_START_LEDS` | 1 on, 0 off | Light the 5 LEDs around the food's start spot ("put the food back") |
+| `ES_CHAIN_SET_BELL` | 1 on, 0 off | Buzzer on or off (from `ActuatorService`, which times the ding) |
 
-The plate LEDs are on one 74HC595 (bits 1 to 4 for LEDs 0 to 3). Bits 0, 5, 6 and 7 are free for the start-position and
-time-button LEDs. Dimming, flashing and the start LEDs aren't wired up yet.
+Two chained 74HC595s, as on the schematic. First 595: QA bell, QB to QE plate LEDs North, East, South, West, QF to QH the
+30s, 45s and 60s button LEDs. Second 595: QA to QE the 5 start-spot LEDs. All of these work. Dimming isn't done yet
+(brightness is on or off).
 `GetDifficulty()` is available to you too. Your timer is `CHAIN_TIMER` (4).
 
 ### Actuators (`ActuatorService`)
@@ -107,24 +109,27 @@ You receive:
 | `ES_PLAY_DING` | Sound the buzzer |
 | `ES_DISPENSE_TREAT` | Run the TREAT dispenser |
 
-Right now the plate is a DC motor on an H-bridge, run from the keyboard (`a` start, `j` forward, `k` reverse, `x` stop,
-`?` status). `ES_PLATE_STOP` stops it. The potentiometer, dispenser and buzzer are still to do.
+The plate servo (RB15, OC1) follows the potentiometer from `ES_PLATE_START` until `ES_PLATE_STOP`. The dispenser servo
+(RB11, OC2) swings to its drop position for 0.7 s on `ES_DISPENSE_TREAT`. `ES_PLAY_DING` turns the buzzer on for 0.4 s
+through `DisplayChainService` (the buzzer is on the 595 chain). Both servos run from Timer2 at 50 Hz. The pulse widths are
+starting guesses to tune on the real servos. Test keys: `a` plate follows pot, `x` stop, `d` dispense, `b` ding, `?` status.
 
-Your timers are `PLATE_SAMPLE_TIMER` (5) and `SERVO_TIMER` (6).
+Your timers are `PLATE_SAMPLE_TIMER` (5), `SERVO_TIMER` (6) and `DING_TIMER` (8).
 
-### Hall sensors (`HallSensors.c`)
+### Analog inputs (`AnalogInputs.c`)
 
-`Check4PlateHalls` reads the 4 Hall sensors one at a time with the ADC and posts `ES_FOOD_PASSED` to `GameService` with the
+`Check4PlateHalls` reads the 4 plate Hall sensors, the food start-spot Hall sensor and the pot one at a time with the ADC. It posts `ES_FOOD_PASSED` to `GameService` with the
 sensor number (0 to 3) when the magnet under the food arrives. While the magnet stays there it repeats every 200 ms, so a
 newly lit LED under the food still counts. `GameService` only counts it if that LED is the lit one. At power-up it measures
 each sensor's resting value. If the magnet is sitting next to one sensor, that sensor's value is estimated from the other three.
-`InitHallSensors()` is called from `main()`.
+The start-spot sensor can't be measured at rest at power-up (the food sits on it), so its resting value is the average
+of the 4 plate sensors. `IsFoodAtStart()` feeds `Check4FoodSensor` and `GetPotReading()` feeds `ActuatorService`.
+`InitAnalogInputs()` and `InitTimeButtons()` are called from `main()`.
 
 ### Game logic (`GameService`, hall sensor, buttons)
 
-`EventCheckers.c` reads the hall sensor and the three buttons. `Check4FoodSensor` posts `ES_FOOD_REMOVED` and `ES_FOOD_PLACED`.
-`Check4TimeButtons` debounces and posts `ES_TIME_SELECTED` with the button number (1 to 3). The code is written. It needs
-the pin numbers in two small functions once the pin map below is filled in.
+`EventCheckers.c` has `Check4FoodSensor` (posts `ES_FOOD_REMOVED` and `ES_FOOD_PLACED`, using the start-spot Hall sensor) and
+`Check4TimeButtons` (RA2, RA3, RA4 to ground with internal pull-ups; debounces and posts `ES_TIME_SELECTED` with 1 to 3).
 
 ## Events
 
@@ -137,10 +142,11 @@ the pin numbers in two small functions once the pin map below is filled in.
 | `ES_COOKED`, `ES_GAME_CLOCK_ELAPSED` | `GameService` | `GameService` | none |
 | `ES_MATRIX_CLEAR`, `ES_MATRIX_SET_COOKED`, `ES_MATRIX_SHOW_CLOCK`, `ES_MATRIX_SHOW_MSG` | `GameService` | `LEDMatrixService` | see above |
 | `ES_CHAIN_SET_ALL`, `ES_CHAIN_SET_LED`, `ES_CHAIN_FLASH_TIME_LEDS`, `ES_CHAIN_SET_START_LEDS` | `GameService` | `DisplayChainService` | see above |
+| `ES_CHAIN_SET_BELL` | `ActuatorService` | `DisplayChainService` | 1 on, 0 off |
 | `ES_PLATE_START`, `ES_PLATE_STOP`, `ES_PLAY_DING`, `ES_DISPENSE_TREAT` | `GameService` | `ActuatorService` | none |
 
 Timers: 0 inactivity (20 s), 1 game clock, 2 result screen, 3 matrix, 4 plate LED chain, 5 plate sampling, 6 servo timing,
-7 how long a plate LED stays lit. Timers 8 to 15 are free.
+7 how long a plate LED stays lit, 8 ding length. Timers 9 to 15 are free.
 
 ## Testing the game logic without hardware
 
@@ -163,34 +169,35 @@ It also has keys for timers: `c` is one second of clock, `l` is the LED timer, `
 
 ## Pins
 
-Check this table before wiring so two people don't pick the same pin. Claim a pin with a small pull request to `main`.
+From the KiCad schematic (`ME_218a_Project_Core_Functionality_Schematic`). The code uses exactly these. If the schematic
+changes, change the code in the same pull request.
 
-| Pin | Use | Owner |
-|---|---|---|
-| RA0 / AN0 | Hall sensor South | Jeremy |
-| RA1 / AN1 | Hall sensor West | Jeremy |
-| RA2 | Plate motor IN3 | Christopher |
-| RA3 | Plate motor IN4 | Christopher |
-| RA4 | free | |
-| RB0 / RB1 | Snap programming (PGED1 / PGEC1) | |
-| RB2 / AN4 | Hall sensor North | Jeremy |
-| RB3 / AN5 | Hall sensor East | Jeremy |
-| RB4 | SPI1 SS (LED matrix) | Alison |
-| RB5 | SPI1 SDO (LED matrix) | Alison |
-| RB6 / RB7 | Serial to the CP2102 (RX / TX) | |
-| RB8 | 74HC595 SER (data) | Jeremy |
-| RB9 | 74HC595 SRCLK (shift clock) | Jeremy |
-| RB10 | 74HC595 RCLK (latch) | Jeremy |
-| RB11 | Motor ENA (held low, channel A unused) | Christopher |
-| RB12 / AN12 | free | |
-| RB13 / AN11 | free | |
-| RB14 | SPI1 SCK (LED matrix) | Alison |
-| RB15 | Plate motor ENB | Christopher |
+| Pin | Name | Net | Used in |
+|---|---|---|---|
+| 1 | MCLR | reset (10k pull-up, button SW1) | |
+| 2 | RA0 / AN0 | Hall South | `AnalogInputs.c` |
+| 3 | RA1 / AN1 | Hall West | `AnalogInputs.c` |
+| 4 / 5 | RB0 / RB1 | PGED1 / PGEC1 (Snap) | |
+| 6 | RB2 / AN4 | Hall North | `AnalogInputs.c` |
+| 7 | RB3 / AN5 | Hall East | `AnalogInputs.c` |
+| 9 | RA2 | 30s Button (to ground) | `EventCheckers.c` |
+| 10 | RA3 | 45s Button (to ground) | `EventCheckers.c` |
+| 11 | RB4 | CS1 (matrix SPI SS, through the 74HC244) | `LEDMatrixService.c` |
+| 12 | RA4 | 60s Button (to ground) | `EventCheckers.c` |
+| 14 | RB5 | SDO1 (matrix SPI data) | `LEDMatrixService.c` |
+| 15 | RB6 | serial from the CP2102 (U1RX) | framework `terminal.c` |
+| 16 | RB7 | serial to the CP2102 (U1TX) | framework `terminal.c` |
+| 17 | RB8 | LED Data (595 SER) | `DisplayChainService.c` |
+| 18 | RB9 | LED SRCLK | `DisplayChainService.c` |
+| 21 | RB10 | LED RCLK | `DisplayChainService.c` |
+| 22 | RB11 | Dispenser Servo (OC2) | `ActuatorService.c` |
+| 23 | RB12 / AN12 | Pot Wiper | `AnalogInputs.c` |
+| 24 | RB13 / AN11 | Hall Food Start | `AnalogInputs.c` |
+| 25 | RB14 | SCK1 (matrix SPI clock) | `LEDMatrixService.c` |
+| 26 | RB15 | Plate Servo (OC1) | `ActuatorService.c` |
 
-Still without pins: the potentiometer (needs an analog pin, so RB12 or RB13), the 3 time buttons, the food start-position
-sensor, the buzzer and the dispenser servo. Only RA4, RB12 and RB13 are free (RB11 too, if ENA is tied low on the board),
-so some of these have to share. Options: the 3 buttons on one analog pin through a resistor ladder, and the buzzer and the
-LEDs on spare 595 outputs or a second 595.
+On the 595 chain: Bell (buzzer), the 4 plate LEDs, the 3 time-button LEDs and the 5 start-spot LEDs (see Plate LEDs above).
+Every I/O pin is used.
 
 ## Working with Git
 
@@ -200,7 +207,7 @@ LEDs on spare 595 outputs or a second 595.
 | `game-logic` | Adam | `GameService`, `EventCheckers` |
 | `actuators` | Christopher | `ActuatorService` |
 | `led-matrix-display` | Alison | `LEDMatrixService`, SPI and matrix HAL files |
-| `display-chain` | Jeremy | `DisplayChainService`, `HallSensors` |
+| `display-chain` | Jeremy | `DisplayChainService`, `AnalogInputs` |
 
 - Work only on your own branch. Never push straight to `main`.
 - Commit small and often, with a short message that says what changed.
