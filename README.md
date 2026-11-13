@@ -183,7 +183,7 @@ It also has keys for timers: `c` is one second of clock, `l` is the LED timer, `
 
 ## Pins
 
-From the KiCad schematic (`ME_218a_Project_Core_Functionality_Schematic`). The code uses exactly these. If the schematic
+From the schematic, revision 2 (`hardware/ME_218a_Project_Schematic_Rev2.pdf`). The code uses exactly these. If the schematic
 changes, change the code in the same pull request.
 
 | Pin | Name | Net | Used in |
@@ -213,8 +213,8 @@ changes, change the code in the same pull request.
 On the 595 chain: Bell (buzzer), the 4 plate LEDs, the 3 time-button LEDs, the 5 start-spot LEDs and the plate motor's
 IN3 / IN4 (see Plate LEDs above). Every I/O pin is used.
 
-The schematic still shows servos. The H-bridge needs adding to it: ENA to RB11, ENB to RB15, IN3 / IN4 to the second
-595's QF / QG, IN1 to 3.3 V, IN2 to ground, plus the motor supply.
+`hardware/ME_218a_Project_Schematic_Rev2.pdf` is the schematic with the servos replaced by the H-bridge and DC motors
+(sheet 2). The KiCad file still needs the same changes.
 
 ## Working with Git
 
