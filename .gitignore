@@ -28,3 +28,8 @@ Thumbs.db
 *.swp
 ~$*
 *Zone.Identifier
+
+!cmake/**/user.cmake
+cmake/**/.generated/*
+cmake/**/CMake*
+*.log
