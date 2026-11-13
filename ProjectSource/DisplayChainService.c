@@ -4,9 +4,10 @@
 
  Description
    Drives the two chained 74HC595 shift registers (schematic: LEDS). They hold
-   the plate LEDs, the time-button LEDs, the 5 food start-spot LEDs and the
-   buzzer ("Bell"). GameService and ActuatorService say what should be on;
-   this service turns that into 16 bits and shifts them out.
+   the plate LEDs, the time-button LEDs, the 5 food start-spot LEDs, the
+   buzzer ("Bell") and the plate motor's direction inputs. GameService and
+   ActuatorService say what should be on; this service turns that into 16
+   bits and shifts them out.
 
  Notes
    Owner: Jeremy (595 code first written in GameService.c on the game-logic
@@ -19,7 +20,10 @@
 
    First 595:  QA Bell (buzzer)   QB LED North   QC LED East   QD LED South
                QE LED West        QF 30s button  QG 45s button QH 60s button
-   Second 595: QA to QE  LED Food Start 1 to 5  (QF to QH not connected)
+   Second 595: QA to QE  LED Food Start 1 to 5
+               QF  plate motor H-bridge IN3   QG  plate motor H-bridge IN4
+               (QF and QG were unused on the schematic. The PIC has no free
+               pins, so the H-bridge direction inputs go here. QH is free.)
 
    Plate LED n (0 = North ... 3 = West) is first-595 bit n + 1.
    Brightness is on or off for now (no dimming yet).
@@ -56,6 +60,11 @@
 #define ALL_PLATE_LEDS   (PLATE_LED_BIT(0) | PLATE_LED_BIT(1) | PLATE_LED_BIT(2) | PLATE_LED_BIT(3))
 #define TIME_LED_BITS    0xE0u                    // first 595 QF, QG, QH
 #define START_LED_BITS   0x1Fu                    // second 595 QA to QE
+#define MOTOR_IN3_BIT    0x20u                    // second 595 QF
+#define MOTOR_IN4_BIT    0x40u                    // second 595 QG
+#define MOTOR_DIR_STOP   0
+#define MOTOR_DIR_FWD    1
+#define MOTOR_DIR_REV    2
 
 #define FLASH_MS         250                      // time-button LED flash rate
 
@@ -179,6 +188,22 @@ ES_Event_t RunDisplayChainService(ES_Event_t ThisEvent)
         sendChain();
         ES_Timer_InitTimer(CHAIN_TIMER, FLASH_MS);
       }
+    }
+    break;
+
+    case ES_CHAIN_SET_MOTOR_DIR:
+    {
+      // Param = 0 stop (both low), 1 forward (IN3 high), 2 reverse (IN4 high)
+      SecondBits &= (uint8_t)~(MOTOR_IN3_BIT | MOTOR_IN4_BIT);
+      if (MOTOR_DIR_FWD == ThisEvent.EventParam)
+      {
+        SecondBits |= MOTOR_IN3_BIT;
+      }
+      else if (MOTOR_DIR_REV == ThisEvent.EventParam)
+      {
+        SecondBits |= MOTOR_IN4_BIT;
+      }
+      sendChain();
     }
     break;
 

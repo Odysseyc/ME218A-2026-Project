@@ -30,9 +30,8 @@ void InitAnalogInputs(void);
 // under the food is at a plate Hall sensor.
 bool Check4PlateHalls(void);
 
-// true when the Hall sensor at the food's start spot sees the magnet.
-// Reports true until the baselines have been measured (the game assumes the
-// food starts on its spot).
+// true (1) when the Hall sensor at the food's start spot sees the magnet,
+// false (0) when the food has been lifted off.
 bool IsFoodAtStart(void);
 
 // latest potentiometer reading, 0 (one end) to 1023 (other end)

@@ -174,6 +174,10 @@ ES_Event_t RunGameService(ES_Event_t ThisEvent)
       {
         startGame((uint8_t)ThisEvent.EventParam);
       }
+      else if (ES_USER_ACTIVITY == ThisEvent.EventType)
+      {
+        ES_Timer_InitTimer(GAME_INACTIVITY_TIMER, INACTIVITY_TIME_MS);
+      }
       else if ((ES_TIMEOUT == ThisEvent.EventType) &&
                (GAME_INACTIVITY_TIMER == ThisEvent.EventParam))
       {
@@ -239,6 +243,13 @@ ES_Event_t RunGameService(ES_Event_t ThisEvent)
             showMessage(MSG_TIMEOUT);
             returnToIdle();
           }
+        }
+        break;
+
+        case ES_USER_ACTIVITY:
+        {
+          // turning the knob is input even if the player hasn't hit an LED
+          ES_Timer_InitTimer(GAME_INACTIVITY_TIMER, INACTIVITY_TIME_MS);
         }
         break;
 

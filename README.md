@@ -13,7 +13,7 @@ Team: Christopher Luey, Jeremy Merritt, Alison Peckham, Adam Sabet
 1. The food sits on its start spot. Lifting it off wakes the game up.
 2. The LEDs by the three time buttons flash. Press one: 30, 45 or 60 seconds. That button also sets the difficulty (1, 2 or 3).
 3. One of the 4 LEDs around the plate lights at random.
-4. Turn the potentiometer to spin the plate until the food reaches that LED, before the LED turns off.
+4. Turn the potentiometer to spin the plate (centre = stopped, further = faster, either direction) until the food reaches that LED, before the LED turns off.
 5. When the food gets there, the LED goes off and the cooked-level display on the LED matrix fills up a bit. Then another random LED lights.
 6. Fill the matrix before the game clock runs out and you win: the microwave dings and a TREAT is dispensed. Run out of time and you lose.
 7. When the game ends, the 5 LEDs around the food's start spot light up. Put the food back to reset. The buttons do nothing until it's back.
@@ -26,10 +26,10 @@ What happens when the player misses an LED (it turns off before they reach it) i
 | Requirement | How we do it |
 |---|---|
 | 3 or more inputs | Hall sensors (food position), potentiometer, time buttons |
-| Analog input | The potentiometer angle sets where the plate points |
+| Analog input | The potentiometer angle sets the plate's speed and direction (proportional, not a threshold) |
 | Non-contact sensing | Hall sensors |
-| 3 or more kinds of feedback | LEDs and LED matrix, buzzer ding, plate servo, TREAT |
-| Moving parts | Servo-driven plate and a servo TREAT dispenser |
+| 3 or more kinds of feedback | LEDs and LED matrix, buzzer ding, plate motor, TREAT |
+| Moving parts | DC gearmotor plate and a DC gearmotor TREAT dispenser |
 | Time display | Game clock shown on the LED matrix |
 | 20 second timeout | Inactivity timer resets the game |
 
@@ -94,8 +94,9 @@ You receive:
 | `ES_CHAIN_SET_BELL` | 1 on, 0 off | Buzzer on or off (from `ActuatorService`, which times the ding) |
 
 Two chained 74HC595s, as on the schematic. First 595: QA bell, QB to QE plate LEDs North, East, South, West, QF to QH the
-30s, 45s and 60s button LEDs. Second 595: QA to QE the 5 start-spot LEDs. All of these work. Dimming isn't done yet
-(brightness is on or off).
+30s, 45s and 60s button LEDs. Second 595: QA to QE the 5 start-spot LEDs, QF and QG the plate motor's H-bridge IN3 and IN4
+(these two outputs were unused on the schematic). Brightness is on or off (no dimming).
+You also receive `ES_CHAIN_SET_BELL` and `ES_CHAIN_SET_MOTOR_DIR` from `ActuatorService`.
 `GetDifficulty()` is available to you too. Your timer is `CHAIN_TIMER` (4).
 
 ### Actuators (`ActuatorService`)
@@ -109,12 +110,17 @@ You receive:
 | `ES_PLAY_DING` | Sound the buzzer |
 | `ES_DISPENSE_TREAT` | Run the TREAT dispenser |
 
-The plate servo (RB15, OC1) follows the potentiometer from `ES_PLATE_START` until `ES_PLATE_STOP`. The dispenser servo
-(RB11, OC2) swings to its drop position for 0.7 s on `ES_DISPENSE_TREAT`. `ES_PLAY_DING` turns the buzzer on for 0.4 s
-through `DisplayChainService` (the buzzer is on the 595 chain). Both servos run from Timer2 at 50 Hz. The pulse widths are
-starting guesses to tune on the real servos. Test keys: `a` plate follows pot, `x` stop, `d` dispense, `b` ding, `?` status.
+Two DC gearmotors on one dual H-bridge. Plate motor on channel B: ENB on RB15 (PWM from OC1), IN3 and IN4 on the second
+595's QF and QG. Dispenser motor on channel A, one direction: ENA on RB11 (PWM from OC2), IN1 wired to 3.3 V and IN2 to
+ground. Both PWMs are 1 kHz from Timer2.
 
-Your timers are `PLATE_SAMPLE_TIMER` (5), `SERVO_TIMER` (6) and `DING_TIMER` (8).
+During a game the pot sets the plate's speed and direction: centre (within +/-80 counts) is stopped, then 30 % duty rising
+to 70 % at the end of the travel. Direction changes stop the motor first. `ES_DISPENSE_TREAT` runs the dispenser at 60 %
+for 1 s. `ES_PLAY_DING` turns the buzzer on for 0.4 s through `DisplayChainService`. All these numbers are starting
+values at the top of `ActuatorService.c`. Test keys: `a` plate follows pot, `j` / `k` forward / reverse at 50 %, `x` stop,
+`d` dispense, `b` ding, `?` status.
+
+Your timers are `PLATE_SAMPLE_TIMER` (5), `DISPENSER_TIMER` (6) and `DING_TIMER` (8).
 
 ### Analog inputs (`AnalogInputs.c`)
 
@@ -122,8 +128,9 @@ Your timers are `PLATE_SAMPLE_TIMER` (5), `SERVO_TIMER` (6) and `DING_TIMER` (8)
 sensor number (0 to 3) when the magnet under the food arrives. While the magnet stays there it repeats every 200 ms, so a
 newly lit LED under the food still counts. `GameService` only counts it if that LED is the lit one. At power-up it measures
 each sensor's resting value. If the magnet is sitting next to one sensor, that sensor's value is estimated from the other three.
-The start-spot sensor can't be measured at rest at power-up (the food sits on it), so its resting value is the average
-of the 4 plate sensors. `IsFoodAtStart()` feeds `Check4FoodSensor` and `GetPotReading()` feeds `ActuatorService`.
+The start-spot sensor reads 1 (above 700 counts) with the food on it and 0 (below 600) with the food off, and has to read the
+same three times in a row before it changes. `IsFoodAtStart()` feeds `Check4FoodSensor` and `GetPotReading()` feeds
+`ActuatorService`. Turning the pot posts `ES_USER_ACTIVITY`, so it counts as input for the 20 s timeout.
 `InitAnalogInputs()` and `InitTimeButtons()` are called from `main()`.
 
 ### Game logic (`GameService`, hall sensor, buttons)
@@ -139,13 +146,15 @@ of the 4 plate sensors. `IsFoodAtStart()` feeds `Check4FoodSensor` and `GetPotRe
 | `ES_FOOD_PLACED` | `Check4FoodSensor` | `GameService` | none |
 | `ES_TIME_SELECTED` | `Check4TimeButtons` | `GameService` | button number 1 to 3 (also the difficulty) |
 | `ES_FOOD_PASSED` | `Check4PlateHalls` | `GameService` | LED number 0 to 3 |
+| `ES_USER_ACTIVITY` | `Check4PlateHalls` (pot turned) | `GameService` | none |
 | `ES_COOKED`, `ES_GAME_CLOCK_ELAPSED` | `GameService` | `GameService` | none |
 | `ES_MATRIX_CLEAR`, `ES_MATRIX_SET_COOKED`, `ES_MATRIX_SHOW_CLOCK`, `ES_MATRIX_SHOW_MSG` | `GameService` | `LEDMatrixService` | see above |
 | `ES_CHAIN_SET_ALL`, `ES_CHAIN_SET_LED`, `ES_CHAIN_FLASH_TIME_LEDS`, `ES_CHAIN_SET_START_LEDS` | `GameService` | `DisplayChainService` | see above |
 | `ES_CHAIN_SET_BELL` | `ActuatorService` | `DisplayChainService` | 1 on, 0 off |
+| `ES_CHAIN_SET_MOTOR_DIR` | `ActuatorService` | `DisplayChainService` | 0 stop, 1 forward, 2 reverse |
 | `ES_PLATE_START`, `ES_PLATE_STOP`, `ES_PLAY_DING`, `ES_DISPENSE_TREAT` | `GameService` | `ActuatorService` | none |
 
-Timers: 0 inactivity (20 s), 1 game clock, 2 result screen, 3 matrix, 4 plate LED chain, 5 plate sampling, 6 servo timing,
+Timers: 0 inactivity (20 s), 1 game clock, 2 result screen, 3 matrix, 4 plate LED chain, 5 plate sampling, 6 dispenser run time,
 7 how long a plate LED stays lit, 8 ding length. Timers 9 to 15 are free.
 
 ## Testing the game logic without hardware
@@ -190,14 +199,17 @@ changes, change the code in the same pull request.
 | 17 | RB8 | LED Data (595 SER) | `DisplayChainService.c` |
 | 18 | RB9 | LED SRCLK | `DisplayChainService.c` |
 | 21 | RB10 | LED RCLK | `DisplayChainService.c` |
-| 22 | RB11 | Dispenser Servo (OC2) | `ActuatorService.c` |
+| 22 | RB11 | Dispenser motor ENA (OC2 PWM). Schematic net: Dispenser Servo | `ActuatorService.c` |
 | 23 | RB12 / AN12 | Pot Wiper | `AnalogInputs.c` |
 | 24 | RB13 / AN11 | Hall Food Start | `AnalogInputs.c` |
 | 25 | RB14 | SCK1 (matrix SPI clock) | `LEDMatrixService.c` |
-| 26 | RB15 | Plate Servo (OC1) | `ActuatorService.c` |
+| 26 | RB15 | Plate motor ENB (OC1 PWM). Schematic net: Plate Servo | `ActuatorService.c` |
 
-On the 595 chain: Bell (buzzer), the 4 plate LEDs, the 3 time-button LEDs and the 5 start-spot LEDs (see Plate LEDs above).
-Every I/O pin is used.
+On the 595 chain: Bell (buzzer), the 4 plate LEDs, the 3 time-button LEDs, the 5 start-spot LEDs and the plate motor's
+IN3 / IN4 (see Plate LEDs above). Every I/O pin is used.
+
+The schematic still shows servos. The H-bridge needs adding to it: ENA to RB11, ENB to RB15, IN3 / IN4 to the second
+595's QF / QG, IN1 to 3.3 V, IN2 to ground, plus the motor supply.
 
 ## Working with Git
 

@@ -9,8 +9,9 @@
 
    Posts ES_FOOD_PASSED to GameService when the magnet under the food is at a
    plate Hall sensor. GameService decides whether that was the lit LED (a
-   hit) or not. Check4FoodSensor uses IsFoodAtStart() and ActuatorService
-   uses GetPotReading().
+   hit) or not. Posts ES_USER_ACTIVITY when the pot is turned, so turning the
+   knob counts as input for the 20 s timeout. Check4FoodSensor uses
+   IsFoodAtStart() and ActuatorService uses GetPotReading().
 
    At power-up it measures each sensor's resting value (baseline). If one
    sensor reads very differently from the other three (the magnet is sitting
@@ -27,9 +28,11 @@
                       Pot Wiper RB12 / AN12
 
    Each channel is read every 6 x POLL_MS = 30 ms. Nothing here blocks.
-   The food-start sensor can't be measured at rest at power-up (the food is
-   sitting on it), so its baseline is the average of the 4 plate baselines.
-   That assumes all 5 Hall sensors are the same part.
+   Food-start sensor: high (1) = magnet on it = food on its spot, low (0) =
+   food lifted off. Read with fixed thresholds, so it works for a digital
+   Hall switch (0 or 3.3 V) or a linear one whose output rises with the
+   magnet. It must read the same way FOOD_START_STABLE_READS times in a row
+   (about 90 ms) before it changes, so a wobble doesn't start a game.
    While the magnet stays at a sensor the event is repeated every REPEAT_MS,
    so an LED that lights up right where the food is parked still counts.
 
@@ -65,6 +68,10 @@
 #define CAL_OUTLIER_GAP    40u    // min gap from the outlier to its nearest neighbor
 #define CAL_WARNING_MS     1000u  // how often to repeat the "unclear" message
 #define REPEAT_MS          200u   // repeat ES_FOOD_PASSED while the magnet stays
+#define FOOD_ON_COUNTS     700    // food-start reading above this = food on its spot
+#define FOOD_OFF_COUNTS    600    // below this = food lifted off (gap = hysteresis)
+#define FOOD_START_STABLE_READS 3
+#define POT_MOVE_COUNTS    25     // pot change that counts as the player turning it
 
 enum { CalClear = -1, CalAmbiguous = -2 };
 
@@ -86,9 +93,11 @@ static uint16_t LastCalWarning;
 
 static uint8_t Channel;                 // channel being read now (0 to 5)
 static uint8_t ActiveMask;              // bit n set = magnet at plate sensor n
-static uint16_t FoodStartBaseline;
-static bool FoodAtStart = true;
+static bool FoodAtStart = true;         // the game assumes the food starts on its spot
+static uint8_t FoodChangeReads = 0;
 static uint16_t PotReading = 512;
+static uint16_t PotReported = 512;
+static bool PotSeen = false;
 static uint16_t LastPollTime;
 static uint16_t LastPostTime[NUM_HALLS];
 
@@ -145,20 +154,36 @@ bool Check4PlateHalls(void)
   if (CH_POT == Channel)
   {
     PotReading = Reading;
+    if (!PotSeen)
+    {
+      PotSeen = true;
+      PotReported = Reading;
+    }
+    else if (abs((int)Reading - (int)PotReported) >= POT_MOVE_COUNTS)
+    {
+      PotReported = Reading;
+      ES_Event_t ThisEvent;
+      ThisEvent.EventType = ES_USER_ACTIVITY;
+      ThisEvent.EventParam = 0;
+      PostGameService(ThisEvent);
+      ReturnVal = true;
+    }
   }
   else if (CH_FOOD_START == Channel)
   {
-    if (HaveBaselines)
+    bool ReadsOn  = (Reading >= FOOD_ON_COUNTS);
+    bool ReadsOff = (Reading <= FOOD_OFF_COUNTS);
+    if ((ReadsOn && !FoodAtStart) || (ReadsOff && FoodAtStart))
     {
-      int Change = abs((int)Reading - (int)FoodStartBaseline);
-      if (Change >= DETECT_COUNTS)
+      if (++FoodChangeReads >= FOOD_START_STABLE_READS)
       {
-        FoodAtStart = true;
+        FoodAtStart = !FoodAtStart;
+        FoodChangeReads = 0;
       }
-      else if (Change <= RELEASE_COUNTS)
-      {
-        FoodAtStart = false;
-      }
+    }
+    else
+    {
+      FoodChangeReads = 0;
     }
   }
   else if (SamplesLeft > 0)
@@ -269,7 +294,6 @@ static void finishCalibration(void)
     }
     HaveBaselines = true;
   }
-  FoodStartBaseline = (uint16_t)(((uint32_t)Baseline[0] + Baseline[1] + Baseline[2] + Baseline[3] + 2u) / 4u);
 
   DB_printf("Hall baselines N/E/S/W %d %d %d %d (%s)\r\n",
             Baseline[0], Baseline[1], Baseline[2], Baseline[3], Source);
