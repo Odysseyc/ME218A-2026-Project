@@ -14,18 +14,27 @@
 #include "ES_Configure.h"
 #include "ES_Framework.h"
 #include "ES_Port.h"
+#include "dbprintf.h"
+#include "AnalogInputs.h"
+#include "EventCheckers.h"
+#include <xc.h>
 
 
 void main(void)
 {
+  uint32_t ResetCause = RCON;   // why the chip last reset (read before anything else)
+  RCON = 0;
   ES_Return_t ErrorType = Success;
 
   _HW_PIC32Init(); // basic PIC hardware init
   // Your hardware initialization function calls go here
-
+  InitAnalogInputs();   // Hall sensors and pot
+  InitTimeButtons();
 
   // now initialize the Events and Services Framework and start it running
   ErrorType = ES_Initialize(ES_Timer_RATE_1mS);
+  // 0x80 = reset button, 0x01/0x03 = power-up, 0x02 = brown-out (supply dipped)
+  DB_printf("\r\nReset cause RCON = 0x%x\r\n", ResetCause);
   if (ErrorType == Success)
   {
     ErrorType = ES_Run();

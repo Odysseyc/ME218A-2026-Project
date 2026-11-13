@@ -39,6 +39,8 @@
 // include our own prototypes to insure consistency between header &
 // actual functionsdefinition
 #include "EventCheckers.h"
+#include "AnalogInputs.h"
+#include <xc.h>
 
 // This is the event checking function sample. It is not intended to be
 // included in the module. It is only here as a sample to guide you in writing
@@ -119,26 +121,106 @@ bool Check4Keystroke(void)
   return false;
 }
 
+/***************************************************************************
+ Input helpers (pins from the schematic)
+   30s button RA2 (pin 9), 45s button RA3 (pin 10), 60s button RA4 (pin 12).
+   Each button connects its pin to ground, so the internal pull-ups are on
+   and a pressed button reads 0.
+   The food start-spot Hall sensor (RB13 / AN11) is read in AnalogInputs.c.
+***************************************************************************/
+#define DEBOUNCE_MS             20
+#define BUTTON_PINS             ((1u << 2) | (1u << 3) | (1u << 4))   // RA2, RA3, RA4
+
+void InitTimeButtons(void)
+{
+  TRISASET = BUTTON_PINS;         // inputs (RA2 to RA4 have no analog function)
+  CNPUASET = BUTTON_PINS;         // pull-ups
+}
+
+// true when the hall sensor sees the food at the start position
+static bool readFoodSensor(void)
+{
+  return IsFoodAtStart();
+}
+
+// bit 0 = time button 1, bit 1 = button 2, bit 2 = button 3; 1 = pressed
+static uint8_t readTimeButtons(void)
+{
+  uint8_t Pressed = 0;
+  if (!PORTAbits.RA2) Pressed |= 0x01;   // 30 s
+  if (!PORTAbits.RA3) Pressed |= 0x02;   // 45 s
+  if (!PORTAbits.RA4) Pressed |= 0x04;   // 60 s
+  return Pressed;
+}
+
 /****************************************************************************
  Function
    Check4FoodSensor
  Description
-   STUB. The game-logic branch fills this in: post ES_FOOD_REMOVED when the
-   food is lifted off its start position and ES_FOOD_PLACED when it is put back.
+   Watches the hall sensor at the food's start position. Posts
+   ES_FOOD_REMOVED to GameService when the food is lifted off, and
+   ES_FOOD_PLACED when it is put back. Owner: game-logic.
 ****************************************************************************/
 bool Check4FoodSensor(void)
 {
-  return false;
+  static bool Initialized = false;
+  static bool LastFoodPresent = false;
+  bool FoodPresent = readFoodSensor();
+  ES_Event_t ThisEvent;
+
+  if (!Initialized)
+  {
+    LastFoodPresent = FoodPresent;      // ignore whatever state we power up in
+    Initialized = true;
+    return false;
+  }
+
+  if (FoodPresent == LastFoodPresent)
+  {
+    return false;
+  }
+
+  LastFoodPresent = FoodPresent;
+  ThisEvent.EventType = FoodPresent ? ES_FOOD_PLACED : ES_FOOD_REMOVED;
+  ThisEvent.EventParam = 0;
+  PostGameService(ThisEvent);
+  return true;
 }
 
 /****************************************************************************
  Function
    Check4TimeButtons
  Description
-   STUB. The game-logic branch fills this in: post ES_TIME_SELECTED
-   (EventParam = button number 1, 2 or 3) when a time button is pressed.
+   Debounces the three time buttons and posts ES_TIME_SELECTED to GameService
+   with EventParam = the button number (1, 2 or 3). That number is also the
+   difficulty. Owner: game-logic.
 ****************************************************************************/
 bool Check4TimeButtons(void)
 {
-  return false;
+  static uint8_t LastReading = 0;
+  static uint8_t StableState = 0;
+  static uint16_t LastChangeTime = 0;
+  uint8_t Reading = readTimeButtons();
+  uint16_t Now = ES_Timer_GetTime();
+  bool ReturnVal = false;
+
+  if (Reading != LastReading)
+  {
+    LastReading = Reading;
+    LastChangeTime = Now;
+  }
+  else if ((Reading != StableState) && ((uint16_t)(Now - LastChangeTime) >= DEBOUNCE_MS))
+  {
+    uint8_t NewlyPressed = Reading & (uint8_t)(~StableState);
+    StableState = Reading;
+    if (NewlyPressed)
+    {
+      ES_Event_t ThisEvent;
+      ThisEvent.EventType = ES_TIME_SELECTED;
+      ThisEvent.EventParam = (NewlyPressed & 0x01) ? 1 : ((NewlyPressed & 0x02) ? 2 : 3);
+      PostGameService(ThisEvent);
+      ReturnVal = true;
+    }
+  }
+  return ReturnVal;
 }

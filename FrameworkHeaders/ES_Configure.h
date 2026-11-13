@@ -71,7 +71,7 @@
 // the name of the run function
 #define SERV_1_RUN RunLEDMatrixService
 // How big should this services Queue be?
-#define SERV_1_QUEUE_SIZE 8
+#define SERV_1_QUEUE_SIZE 10
 #endif
 
 /****************************************************************************/
@@ -272,8 +272,9 @@ typedef enum
   /* ---- Game events (see Checkpoint 1 state diagram) ---- */
   ES_FOOD_REMOVED,          /* food lifted off the start position (starts a game from Welcome). Posted by Check4FoodSensor */
   ES_FOOD_PLACED,           /* food put back on the start position. Posted by Check4FoodSensor */
-  ES_TIME_SELECTED,         /* a cook-time button was pressed. Param = seconds (30, 45 or 60). Posted by Check4TimeButtons */
-  ES_FOOD_PASSED,           /* food passed an LED. Param = LED index. Posted by ActuatorService to GameService */
+  ES_TIME_SELECTED,         /* a cook-time button was pressed. Param = button 1 (30 s), 2 (45 s) or 3 (60 s). Posted by Check4TimeButtons */
+  ES_FOOD_PASSED,           /* food is at a plate LED. Param = LED index 0 N, 1 E, 2 S, 3 W. Posted by Check4PlateHalls */
+  ES_USER_ACTIVITY,         /* the player turned the pot (counts as input for the 20 s timeout). Posted by Check4PlateHalls */
   ES_COOKED,                /* every LED dimmed. Posted by GameService to itself */
   ES_GAME_CLOCK_ELAPSED,    /* game clock ran out. Posted by GameService to itself */
 
@@ -281,13 +282,16 @@ typedef enum
   ES_MATRIX_CLEAR,          /* blank the matrix. Param unused */
   ES_MATRIX_SET_COOKED,     /* show the cooked level. Param = level, 0 (lowest) to MATRIX_MAX_COOKED_LEVEL */
   ES_MATRIX_SHOW_CLOCK,     /* show elapsed game time. Param = seconds elapsed */
+  ES_MATRIX_SHOW_MSG,       /* show a message on the timer display. Param = DisplayMsg_t (LEDMatrixService.h) */
   ES_MATRIX_STEP_DONE,      /* internal to LEDMatrixService: one display step finished, do the next */
 
   /* ---- Commands from GameService to the plate LED chain (DisplayChainService) ---- */
   ES_CHAIN_SET_ALL,         /* Param = brightness 0 to 255 for every plate LED */
   ES_CHAIN_SET_LED,         /* Param = (LED index << 8) | brightness */
   ES_CHAIN_FLASH_TIME_LEDS, /* flash the LEDs by the timer buttons. Param = 1 start, 0 stop */
-  ES_CHAIN_SET_START_LEDS,   /* the 4 LEDs around the food's start position. Param = 1 on (put the food back), 0 off */
+  ES_CHAIN_SET_START_LEDS,   /* the 5 LEDs around the food's start position. Param = 1 on (put the food back), 0 off */
+  ES_CHAIN_SET_BELL,        /* buzzer on the 595 chain. Param = 1 on, 0 off. Posted by ActuatorService */
+  ES_CHAIN_SET_MOTOR_DIR,   /* plate motor H-bridge IN3/IN4 on the 595 chain. Param = 0 stop, 1 forward, 2 reverse. Posted by ActuatorService */
 
   /* ---- Commands from GameService to the actuators (ActuatorService) ---- */
   ES_PLATE_START,           /* start rotating the plate under potentiometer control */
@@ -328,7 +332,7 @@ typedef enum
 
 /****************************************************************************/
 // This is the list of event checking functions
-#define EVENT_CHECK_LIST Check4Keystroke, Check4FoodSensor, Check4TimeButtons
+#define EVENT_CHECK_LIST Check4Keystroke, Check4FoodSensor, Check4TimeButtons, Check4PlateHalls
 
 /****************************************************************************/
 // These are the definitions for the post functions to be executed when the
@@ -345,7 +349,7 @@ typedef enum
 #define TIMER5_RESP_FUNC PostActuatorService
 #define TIMER6_RESP_FUNC PostActuatorService
 #define TIMER7_RESP_FUNC PostGameService
-#define TIMER8_RESP_FUNC TIMER_UNUSED
+#define TIMER8_RESP_FUNC PostActuatorService
 #define TIMER9_RESP_FUNC TIMER_UNUSED
 #define TIMER10_RESP_FUNC TIMER_UNUSED
 #define TIMER11_RESP_FUNC TIMER_UNUSED
@@ -367,9 +371,10 @@ typedef enum
 #define MATRIX_TIMER          3     /* LEDMatrixService */
 #define CHAIN_TIMER           4     /* DisplayChainService: flashing / brightness refresh */
 #define PLATE_SAMPLE_TIMER    5     /* ActuatorService: potentiometer sampling */
-#define SERVO_TIMER           6     /* ActuatorService: dispenser and ding durations */
+#define DISPENSER_TIMER       6     /* ActuatorService: how long the dispenser runs */
 #define LED_ON_TIMER          7     /* GameService: how long a plate LED stays lit */
-/* timers 8 to 15 are free: claim one with a small pull request to main */
+#define DING_TIMER            8     /* ActuatorService: how long the buzzer sounds */
+/* timers 9 to 15 are free: claim one with a small pull request to main */
 
 /* number of LED hits that fill the cooked-level display (shared by GameService and LEDMatrixService) */
 #define MATRIX_MAX_COOKED_LEVEL 8

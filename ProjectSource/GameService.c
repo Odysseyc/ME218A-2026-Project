@@ -10,13 +10,15 @@
 
    States: Welcome, SelectTime, Cooking, Won, Lost, ReturnFood
 
-   After a game ends (or is abandoned) the 4 LEDs around the food's start
+   After a game ends (or is abandoned) the 5 LEDs around the food's start
    position light up if the food is not back there yet (ReturnFood). Nothing
    starts until the food is put back (ES_FOOD_PLACED) and then lifted off
    again (ES_FOOD_REMOVED).
 
  Notes
-   Owner branch: game-logic.
+   Owner: Adam. Plate LED timing per difficulty from Jeremy's plate code.
+   The Hall sensors (AnalogInputs.c) post ES_FOOD_PASSED and the 595 code is
+   in DisplayChainService.c.
    With KEYBOARD_SIMULATION set to 1 the state machine can be driven from the
    terminal (needed for Checkpoint 2):
      f          food lifted off the start position (Welcome -> SelectTime)
@@ -28,6 +30,7 @@
  When           Who     What/Why
  -------------- ---     --------
  11/11/26       ---     first full version
+ 11/13/26       ---     integration: LED time per difficulty, matrix messages
 ****************************************************************************/
 /*----------------------------- Include Files -----------------------------*/
 #include "../ProjectHeaders/GameService.h"
@@ -57,7 +60,6 @@
 #define ONE_SEC             1000
 #define INACTIVITY_TIME_MS  20000     // spec: 20 s with no input resets the game
 #define RESULT_TIME_MS      10000     // spec: result may show for at most 30 s
-#define LED_ON_TIME_MS      3000      // how long a plate LED stays lit (tune this)
 
 /*------------------------------ Module Types -----------------------------*/
 typedef enum { Welcome = 0, SelectTime, Cooking, Won, Lost, ReturnFood } GameState_t;
@@ -72,6 +74,7 @@ static void finishGame(bool PlayerWon);
 static void lightNewLED(void);
 static void turnOffLitLED(void);
 static void stopGameTimers(void);
+static void showMessage(DisplayMsg_t Message);
 static ES_Event_t keyToEvent(ES_Event_t KeyEvent);
 
 /*---------------------------- Module Variables ---------------------------*/
@@ -86,6 +89,8 @@ static uint8_t LitLED = NO_LED;
 static bool FoodAtStart = true;         // assumes the food is in place at power-up
 
 static const uint8_t TimeChoiceSeconds[3] = {30, 45, 60};   // button 1, 2, 3
+// how long a plate LED stays lit, by difficulty (from Jeremy's easy/medium/hard)
+static const uint16_t LEDOnTimeMs[3] = {2000, 1500, 1000};   // button 1, 2, 3
 
 /*------------------------------ Module Code ------------------------------*/
 bool InitGameService(uint8_t Priority)
@@ -155,6 +160,7 @@ ES_Event_t RunGameService(ES_Event_t ThisEvent)
         srand(ES_Timer_GetTime());                          // different LED order each game
         postTo(PostDisplayChainService, ES_CHAIN_FLASH_TIME_LEDS, 1);
         ES_Timer_InitTimer(GAME_INACTIVITY_TIMER, INACTIVITY_TIME_MS);
+        showMessage(MSG_SET_TIME);
         CurrentState = SelectTime;
         DB_printf("Welcome -> SelectTime\r\n");
       }
@@ -168,10 +174,15 @@ ES_Event_t RunGameService(ES_Event_t ThisEvent)
       {
         startGame((uint8_t)ThisEvent.EventParam);
       }
+      else if (ES_USER_ACTIVITY == ThisEvent.EventType)
+      {
+        ES_Timer_InitTimer(GAME_INACTIVITY_TIMER, INACTIVITY_TIME_MS);
+      }
       else if ((ES_TIMEOUT == ThisEvent.EventType) &&
                (GAME_INACTIVITY_TIMER == ThisEvent.EventParam))
       {
         DB_printf("No input for 20 s: leaving SelectTime\r\n");
+        showMessage(MSG_TIMEOUT);
         returnToIdle();
       }
     }
@@ -229,8 +240,16 @@ ES_Event_t RunGameService(ES_Event_t ThisEvent)
           else if (GAME_INACTIVITY_TIMER == ThisEvent.EventParam)
           {
             DB_printf("No input for 20 s: leaving Cooking\r\n");
+            showMessage(MSG_TIMEOUT);
             returnToIdle();
           }
+        }
+        break;
+
+        case ES_USER_ACTIVITY:
+        {
+          // turning the knob is input even if the player hasn't hit an LED
+          ES_Timer_InitTimer(GAME_INACTIVITY_TIMER, INACTIVITY_TIME_MS);
         }
         break;
 
@@ -317,14 +336,14 @@ static void enterWelcome(void)
   postTo(PostDisplayChainService, ES_CHAIN_SET_ALL, LED_OFF);
   postTo(PostDisplayChainService, ES_CHAIN_SET_START_LEDS, 0);
   postTo(PostLEDMatrixService, ES_MATRIX_CLEAR, 0);
-  // TODO (LED owners): a welcome animation that invites the user to start
+  showMessage(MSG_WELCOME);
 
   CurrentState = Welcome;
   DB_printf("State: Welcome\r\n");
 }
 
 // the game is over but the food is not back at its start position yet:
-// light the 4 LEDs around that spot and wait for the food to be put back
+// light the 5 LEDs around that spot and wait for the food to be put back
 static void enterReturnFood(void)
 {
   stopGameTimers();
@@ -338,7 +357,7 @@ static void enterReturnFood(void)
   postTo(PostDisplayChainService, ES_CHAIN_FLASH_TIME_LEDS, 0);
   postTo(PostDisplayChainService, ES_CHAIN_SET_ALL, LED_OFF);
   postTo(PostDisplayChainService, ES_CHAIN_SET_START_LEDS, 1);
-  postTo(PostLEDMatrixService, ES_MATRIX_CLEAR, 0);
+  // the matrix keeps showing the last message (DING!, TIME UP or TOO SLOW)
 
   CurrentState = ReturnFood;
   DB_printf("State: ReturnFood (put the food back)\r\n");
@@ -390,11 +409,13 @@ static void finishGame(bool PlayerWon)
   {
     postTo(PostActuatorService, ES_PLAY_DING, 0);
     postTo(PostActuatorService, ES_DISPENSE_TREAT, 0);
+    showMessage(MSG_DONE);
     CurrentState = Won;
     DB_printf("Cooking -> Won\r\n");
   }
   else
   {
+    showMessage(MSG_TIME_UP);
     CurrentState = Lost;
     DB_printf("Cooking -> Lost (cooked level %d of %d)\r\n", CookedLevel, HITS_NEEDED);
   }
@@ -412,8 +433,14 @@ static void lightNewLED(void)
 
   LitLED = NewLED;
   postTo(PostDisplayChainService, ES_CHAIN_SET_LED, (uint16_t)((LitLED << 8) | LED_FULL));
-  ES_Timer_InitTimer(LED_ON_TIMER, LED_ON_TIME_MS);
+  ES_Timer_InitTimer(LED_ON_TIMER, LEDOnTimeMs[Difficulty - 1]);
   DB_printf("LED %d lit\r\n", LitLED);
+}
+
+// what the timer display shows when it is not showing the clock
+static void showMessage(DisplayMsg_t Message)
+{
+  postTo(PostLEDMatrixService, ES_MATRIX_SHOW_MSG, (uint16_t)Message);
 }
 
 static void turnOffLitLED(void)

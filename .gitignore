@@ -28,3 +28,15 @@ Thumbs.db
 *.swp
 ~$*
 *Zone.Identifier
+
+# MPLAB build output and generated project files
+.generated_files/
+nbproject/
+Makefile*
+Package-*
+private/
+cmake/**/.generated/*
+cmake/**/CMake*
+*.log
+# but keep each person's include-path file
+!cmake/**/user.cmake

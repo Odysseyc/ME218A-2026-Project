@@ -8,6 +8,7 @@
    Simulator-only keys (stand in for timers expiring):
      c  one second of game clock     l  the lit LED's timer ran out
      i  20 s inactivity timer        x  the result screen timer
+     m  the player turned the pot
      q  quit                         ?  show this help
 */
 #include <stdio.h>
@@ -23,9 +24,9 @@
 #include "ActuatorService.h"
 
 static const char *names[] = {"NO_EVENT", "ERROR", "INIT", "TIMEOUT", "SHORT_TIMEOUT", "NEW_KEY",
-  "FOOD_REMOVED", "FOOD_PLACED", "TIME_SELECTED", "FOOD_PASSED", "COOKED", "GAME_CLOCK_ELAPSED",
-  "MATRIX_CLEAR", "MATRIX_SET_COOKED", "MATRIX_SHOW_CLOCK", "MATRIX_STEP_DONE",
-  "CHAIN_SET_ALL", "CHAIN_SET_LED", "CHAIN_FLASH_TIME_LEDS", "CHAIN_SET_START_LEDS",
+  "FOOD_REMOVED", "FOOD_PLACED", "TIME_SELECTED", "FOOD_PASSED", "USER_ACTIVITY", "COOKED", "GAME_CLOCK_ELAPSED",
+  "MATRIX_CLEAR", "MATRIX_SET_COOKED", "MATRIX_SHOW_CLOCK", "MATRIX_SHOW_MSG", "MATRIX_STEP_DONE",
+  "CHAIN_SET_ALL", "CHAIN_SET_LED", "CHAIN_FLASH_TIME_LEDS", "CHAIN_SET_START_LEDS", "CHAIN_SET_BELL", "CHAIN_SET_MOTOR_DIR",
   "PLATE_START", "PLATE_STOP", "PLAY_DING", "DISPENSE_TREAT"};
 
 static ES_Event_t queue[64];
@@ -63,6 +64,7 @@ int main(void)
       case 'c': run(ES_TIMEOUT, GAME_CLOCK_TIMER); break;
       case 'l': run(ES_TIMEOUT, LED_ON_TIMER); break;
       case 'i': run(ES_TIMEOUT, GAME_INACTIVITY_TIMER); break;
+      case 'm': run(ES_USER_ACTIVITY, 0); break;
       case 'x': run(ES_TIMEOUT, GAME_RESULT_TIMER); break;
       case 'q': return 0;
       case '?': printf("%s", "f food off | p food back | 1 2 3 buttons | w e r t LED 0-3 reached\nc clock tick | l LED timer | i inactivity | x result timer | q quit\n"); break;
