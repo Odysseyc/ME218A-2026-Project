@@ -22,7 +22,7 @@
 // prototypes for event checkers
 
 bool Check4Keystroke(void);
-bool Check4FoodRemoved(void);   // hall sensor(s) at the food start position (game-logic branch)
+bool Check4FoodSensor(void);    // hall sensor at the food start position (game-logic branch)
 bool Check4TimeButtons(void);   // 30 / 45 / 60 second buttons (game-logic branch)
 
 #endif /* EventCheckers_H */

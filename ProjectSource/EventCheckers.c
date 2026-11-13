@@ -121,12 +121,12 @@ bool Check4Keystroke(void)
 
 /****************************************************************************
  Function
-   Check4FoodRemoved
+   Check4FoodSensor
  Description
-   STUB. Should detect the food/plate hall-sensor transition at the start
-   position and post ES_FOOD_REMOVED to GameService. Owner: game-logic.
+   STUB. The game-logic branch fills this in: post ES_FOOD_REMOVED when the
+   food is lifted off its start position and ES_FOOD_PLACED when it is put back.
 ****************************************************************************/
-bool Check4FoodRemoved(void)
+bool Check4FoodSensor(void)
 {
   return false;
 }
@@ -135,8 +135,8 @@ bool Check4FoodRemoved(void)
  Function
    Check4TimeButtons
  Description
-   STUB. Should detect a press of the 30 / 45 / 60 second buttons and post
-   ES_TIME_SELECTED (EventParam = seconds) to GameService. Owner: game-logic.
+   STUB. The game-logic branch fills this in: post ES_TIME_SELECTED
+   (EventParam = button number 1, 2 or 3) when a time button is pressed.
 ****************************************************************************/
 bool Check4TimeButtons(void)
 {
