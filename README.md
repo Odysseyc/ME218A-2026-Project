@@ -110,9 +110,14 @@ You receive:
 | `ES_PLAY_DING` | Sound the buzzer |
 | `ES_DISPENSE_TREAT` | Run the TREAT dispenser |
 
-Two DC gearmotors on one dual H-bridge. Plate motor on channel B: ENB on RB15 (PWM from OC1), IN3 and IN4 on the second
-595's QF and QG. Dispenser motor on channel A, one direction: ENA on RB11 (PWM from OC2), IN1 wired to 3.3 V and IN2 to
-ground. Both PWMs are 1 kHz from Timer2.
+Plate: the larger 37 mm gearmotor (the one with the encoder) on H-bridge channel B: ENB on RB15 (PWM from OC1), IN3 and IN4
+on the second 595's QF and QG. 1 kHz PWM from Timer2. The encoder isn't connected: the pot sets speed, not position.
+
+Dispenser: the smaller gearmotor (no encoder) on channel A, one direction: ENA on RB11 (PWM from OC2), IN1 wired to 3.3 V and
+IN2 to ground. To use a hobby servo instead, put its signal wire on RB11 and set `DISPENSER_IS_SERVO` to 1 at the top of
+`ActuatorService.c` (50 Hz from Timer3, rest and drop positions in the same place).
+
+The "pot" is the potentiometer RV1, the knob the player turns. Its wiper (middle pin) goes to RB12.
 
 During a game the pot sets the plate's speed and direction: centre (within +/-80 counts) is stopped, then 30 % duty rising
 to 70 % at the end of the travel. Direction changes stop the motor first. `ES_DISPENSE_TREAT` runs the dispenser at 60 %

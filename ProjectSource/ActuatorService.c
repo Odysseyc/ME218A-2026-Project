@@ -11,15 +11,22 @@
        IN3 / IN4  second 74HC595 QF / QG (set through DisplayChainService)
        During a game the potentiometer sets speed and direction: centre =
        stopped, turn one way = spin one way, faster the further you turn.
-     TREAT dispenser motor (channel A, one direction only)
-       ENA  RB11 (pin 22, the schematic's "Dispenser Servo" pin)  PWM from OC2
-       IN1 wired to 3.3 V and IN2 to ground on the board
-       ES_DISPENSE_TREAT runs it for DISPENSE_TIME_MS.
+     TREAT dispenser (RB11, pin 22, the schematic's "Dispenser Servo" pin,
+     PWM from OC2). Either of two parts, chosen with DISPENSER_IS_SERVO:
+       0: the small DC gearmotor on H-bridge channel A. RB11 drives ENA,
+          IN1 is wired to 3.3 V and IN2 to ground. ES_DISPENSE_TREAT runs it
+          at DISPENSE_DUTY for DISPENSE_TIME_MS.
+       1: a hobby servo with its signal wire on RB11. ES_DISPENSE_TREAT
+          moves it to DISPENSER_DROP_US for DISPENSE_TIME_MS, then back to
+          DISPENSER_REST_US. Uses Timer3 at 50 Hz.
      Buzzer  "Bell" on the first 74HC595 QA (DisplayChainService)
 
  Notes
    Owner: Christopher. Keyboard test and direction-change handling are his.
-   Both PWMs come from Timer2 at 1 kHz (PBCLK 20 MHz, 1:1, PR2 = 19999).
+   The plate PWM (and the dispenser motor's) comes from Timer2 at 1 kHz
+   (PBCLK 20 MHz, 1:1, PR2 = 19999). A dispenser servo uses Timer3 instead.
+   The plate motor's encoder isn't used (no free pins, and the pot sets
+   speed, not position).
    The direction is changed only while the plate's PWM is at 0, and the new
    speed is applied one update later, after DisplayChainService has shifted
    the new direction out.
@@ -37,7 +44,8 @@
  11/13/26       ---          integration: ENA/ENB on the schematic's RB11 /
                              RB15 with PWM, IN3/IN4 moved off RA0/RA1
                              (Hall South / West) to spare 595 outputs, pot
-                             speed control, dispenser and ding
+                             speed control, dispenser and ding; option for
+                             a servo dispenser
 ****************************************************************************/
 /*----------------------------- Include Files -----------------------------*/
 #include "../ProjectHeaders/ActuatorService.h"
@@ -65,8 +73,18 @@
 #define PLATE_UPDATE_MS      20           // how often the plate follows the pot
 #define TEST_DUTY            50           // % for the j / k test keys
 
+#define DISPENSER_IS_SERVO   0            // 0 = small DC gearmotor, 1 = hobby servo
+
+#if DISPENSER_IS_SERVO
+#define SERVO_PERIOD_TICKS   49999u       // Timer3 at 2.5 MHz: 20 ms
+#define US_TO_SERVO_TICKS(us) ((uint16_t)(((uint32_t)(us) * 5u) / 2u))
+#define DISPENSER_REST_US    1000u        // holding the TREATs in
+#define DISPENSER_DROP_US    2000u        // letting one TREAT out
+#define DISPENSE_TIME_MS     700          // time at the drop position
+#else
 #define DISPENSE_DUTY        60           // %
-#define DISPENSE_TIME_MS     1000         // how long the dispenser runs per TREAT
+#define DISPENSE_TIME_MS     1000         // how long the motor runs per TREAT
+#endif
 #define DING_TIME_MS         400          // how long the buzzer sounds
 
 #define OC_PPS_CODE          0b0101       // RPB15R = OC1, RPB11R = OC2
@@ -76,7 +94,7 @@ typedef enum { DirStop = 0, DirForward = 1, DirReverse = 2 } MotorDirection_t;
 /*---------------------------- Module Functions ---------------------------*/
 static void drivePlate(MotorDirection_t Dir, uint8_t Duty);
 static void setPlateDuty(uint8_t Duty);
-static void setDispenserDuty(uint8_t Duty);
+static void runDispenser(bool On);
 static void setDirection(MotorDirection_t Dir);
 static void setBell(bool On);
 static void stopPlate(void);
@@ -102,7 +120,7 @@ bool InitActuatorService(uint8_t Priority)
   CurrentDuty = 0;
   DirectionSettling = false;
 
-  // ENB (RB15) and ENA (RB11): start low, then hand them to OC1 / OC2
+  // ENB (RB15) and the dispenser (RB11): start low, then hand them to OC1 / OC2
   LATBCLR = (1u << 15) | (1u << 11);
   ANSELBbits.ANSB15 = 0;
   TRISBbits.TRISB15 = 0;
@@ -123,10 +141,22 @@ bool InitActuatorService(uint8_t Priority)
   OC1R = 0;
   OC1RS = 0;
   OC2CON = 0;
+#if DISPENSER_IS_SERVO
+  // Timer3: PBCLK / 8, 20 ms period, for the dispenser servo on OC2
+  T3CON = 0;
+  T3CONbits.TCKPS = 0b011;
+  TMR3 = 0;
+  PR3 = SERVO_PERIOD_TICKS;
+  OC2CONbits.OCTSEL = 1;
+  OC2R = US_TO_SERVO_TICKS(DISPENSER_REST_US);
+  OC2RS = US_TO_SERVO_TICKS(DISPENSER_REST_US);
+  T3CONbits.ON = 1;
+#else
   OC2CONbits.OCTSEL = 0;
-  OC2CONbits.OCM = 0b110;
   OC2R = 0;
   OC2RS = 0;
+#endif
+  OC2CONbits.OCM = 0b110;
 
   T2CONbits.ON = 1;
   OC1CONbits.ON = 1;
@@ -190,7 +220,7 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
       if (!Dispensing)
       {
         Dispensing = true;
-        setDispenserDuty(DISPENSE_DUTY);
+        runDispenser(true);
         ES_Timer_InitTimer(DISPENSER_TIMER, DISPENSE_TIME_MS);
       }
       break;
@@ -233,7 +263,7 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
       }
       else if (DISPENSER_TIMER == ThisEvent.EventParam)
       {
-        setDispenserDuty(0);
+        runDispenser(false);
         Dispensing = false;
       }
       else if (DING_TIMER == ThisEvent.EventParam)
@@ -301,9 +331,14 @@ static void setPlateDuty(uint8_t Duty)
   OC1RS = DUTY_TO_OCRS(Duty);
 }
 
-static void setDispenserDuty(uint8_t Duty)
+// motor: on at DISPENSE_DUTY or off. Servo: drop position or rest position.
+static void runDispenser(bool On)
 {
-  OC2RS = DUTY_TO_OCRS(Duty);
+#if DISPENSER_IS_SERVO
+  OC2RS = US_TO_SERVO_TICKS(On ? DISPENSER_DROP_US : DISPENSER_REST_US);
+#else
+  OC2RS = DUTY_TO_OCRS(On ? DISPENSE_DUTY : 0);
+#endif
 }
 
 // IN3 / IN4 are on the 595 chain, which DisplayChainService owns
