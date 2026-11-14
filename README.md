@@ -119,7 +119,7 @@ IN2 to ground. To use a hobby servo instead, put its signal wire on RB11 and set
 
 The "pot" is the potentiometer RV1, the knob the player turns. Its wiper (middle pin) goes to RB12.
 
-During a game the pot sets the plate's speed and direction: centre (within +/-80 counts) is stopped, then 30 % duty rising
+During a game the pot sets the plate's speed and direction: centre (within +/-64 counts) is stopped, then 30 % duty rising
 to 70 % at the end of the travel. Direction changes stop the motor first. `ES_DISPENSE_TREAT` runs the dispenser at 60 %
 for 1 s. `ES_PLAY_DING` turns the buzzer on for 0.4 s through `DisplayChainService`. All these numbers are starting
 values at the top of `ActuatorService.c`. Test keys: `a` plate follows pot, `j` / `k` forward / reverse at 50 %, `x` stop,

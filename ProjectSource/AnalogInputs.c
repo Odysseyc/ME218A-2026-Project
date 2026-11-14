@@ -42,6 +42,8 @@
  11/11/26       Jeremy  Hall sampling, calibration, hit detection
  11/13/26       ---     moved out of GameService into its own module
  11/13/26       ---     added food-start Hall and pot (schematic pins)
+ 11/13/26       ---     ADC clock and acquisition time from Christopher's
+                        working pot code
 ****************************************************************************/
 /*----------------------------- Include Files -----------------------------*/
 #include "../ProjectHeaders/AnalogInputs.h"
@@ -111,13 +113,19 @@ void InitAnalogInputs(void)
   TRISASET  = (1u << 0) | (1u << 1);
   ANSELASET = (1u << 0) | (1u << 1);
 
+  // ADC timing from Christopher's working pot test (actuators branch).
+  // Unlike his test, sampling is started by hand (no ASAM) because this
+  // module switches between 6 channels.
+  PMD1bits.AD1MD = 0;       // make sure the ADC module is powered
   AD1CON1 = 0;
-  AD1CON2 = 0;
+  AD1CON2 = 0;              // AVDD / AVSS references, one channel, buffer 0
   AD1CON3 = 0;
   AD1CHS  = 0;
   AD1CSSL = 0;
-  AD1CON3bits.ADRC = 1;     // ADC's internal clock
-  AD1CON3bits.SAMC = 16;    // sample time for each Hall
+  IEC0bits.AD1IE = 0;       // no ADC interrupt
+  IFS0bits.AD1IF = 0;
+  AD1CON3bits.ADCS = 19;    // 2 us ADC clock from the 20 MHz peripheral clock
+  AD1CON3bits.SAMC = 10;    // 20 us acquisition time
   AD1CON1bits.SSRC = 7;     // convert automatically after sampling
   AD1CON1bits.ON = 1;
 
