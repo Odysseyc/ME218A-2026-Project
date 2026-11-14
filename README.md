@@ -119,7 +119,7 @@ IN2 to ground. To use a hobby servo instead, put its signal wire on RB11 and set
 
 The "pot" is the potentiometer RV1, the knob the player turns. Its wiper (middle pin) goes to RB12.
 
-During a game the pot sets the plate's speed and direction: centre (within +/-80 counts) is stopped, then 30 % duty rising
+During a game the pot sets the plate's speed and direction: centre (within +/-64 counts) is stopped, then 30 % duty rising
 to 70 % at the end of the travel. Direction changes stop the motor first. `ES_DISPENSE_TREAT` runs the dispenser at 60 %
 for 1 s. `ES_PLAY_DING` turns the buzzer on for 0.4 s through `DisplayChainService`. All these numbers are starting
 values at the top of `ActuatorService.c`. Test keys: `a` plate follows pot, `j` / `k` forward / reverse at 50 %, `x` stop,
@@ -183,7 +183,7 @@ It also has keys for timers: `c` is one second of clock, `l` is the LED timer, `
 
 ## Pins
 
-From the KiCad schematic (`ME_218a_Project_Core_Functionality_Schematic`). The code uses exactly these. If the schematic
+From the schematic, revision 2 (`hardware/ME_218a_Project_Schematic_Rev2.pdf`). The code uses exactly these. If the schematic
 changes, change the code in the same pull request.
 
 | Pin | Name | Net | Used in |
@@ -213,8 +213,8 @@ changes, change the code in the same pull request.
 On the 595 chain: Bell (buzzer), the 4 plate LEDs, the 3 time-button LEDs, the 5 start-spot LEDs and the plate motor's
 IN3 / IN4 (see Plate LEDs above). Every I/O pin is used.
 
-The schematic still shows servos. The H-bridge needs adding to it: ENA to RB11, ENB to RB15, IN3 / IN4 to the second
-595's QF / QG, IN1 to 3.3 V, IN2 to ground, plus the motor supply.
+`hardware/ME_218a_Project_Schematic_Rev2.pdf` is the schematic with the servos replaced by the H-bridge and DC motors
+(sheet 2). The KiCad file still needs the same changes.
 
 ## Working with Git
 

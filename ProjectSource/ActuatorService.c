@@ -41,6 +41,7 @@
  -------------- ---          --------
  11/09/26       ---          stub
  11/12/26       Christopher  plate motor test: start/stop, direction
+ 11/13/26       Christopher  pot direction control with a centre stop (tested)
  11/13/26       ---          integration: ENA/ENB on the schematic's RB11 /
                              RB15 with PWM, IN3/IN4 moved off RA0/RA1
                              (Hall South / West) to spare 595 outputs, pot
@@ -67,7 +68,7 @@
 #define DUTY_TO_OCRS(pct)    ((uint16_t)(((uint32_t)(PWM_PERIOD_TICKS + 1u) * (pct)) / 100u))
 
 #define POT_CENTER           512
-#define POT_DEADBAND         80           // +/- counts around the centre = stopped
+#define POT_DEADBAND         64           // +/- counts around the centre = stopped (Christopher's tested value)
 #define PLATE_MIN_DUTY       30           // % just past the dead band (enough to move)
 #define PLATE_MAX_DUTY       70           // % at the end of the pot travel
 #define PLATE_UPDATE_MS      20           // how often the plate follows the pot
