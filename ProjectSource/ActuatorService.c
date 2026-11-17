@@ -11,14 +11,15 @@
      IN3/IN4   second 74HC595 QF/QG
      Encoder A RB0 / pin 4; encoder B RB1 / pin 5
      Pot       RB12 / pin 23, read by AnalogInputs
-   Dispenser ENA (RB11 / pin 22) is held low.
+   Dispenser (L298N channel A): ENA RB11 / pin 22, OC2 PWM;
+     IN1 = 3.3 V, IN2 = GND. Runs for 10 seconds after a win.
 
  Notes
    Follows the knob only during a game; aligns without moving at each start.
-   Keys: x pauses, a resumes within a game after matching the knob, v status.
+   Keys: x stops both motors, a resumes the plate within a game, v status.
    Timer2 supplies 1 kHz PWM; the position controller runs every 20 ms.
    Waits for the encoder to stop changing before starting or reversing.
-   GameService sends ES_PLATE_START/STOP. Dispenser and ding are not handled.
+   GameService sends ES_PLATE_START/STOP and ES_DISPENSE_TREAT on a win.
 
  History
  When           Who          What/Why
@@ -70,7 +71,10 @@
 #define MAX_DRIVE_MS            3000u
 #define PWM_TIMEOUT_TICKS       100u  // About 100 ms at 1 kHz
 
-#define OC_PPS_CODE          0b0101       // RPB15R = OC1
+#define DISPENSER_DUTY          75u
+#define DISPENSER_RUN_TICKS     10000u // 10 seconds on the 1 kHz Timer2
+
+#define OC_PPS_CODE          0b0101       // RPB15R = OC1; RPB11R = OC2
 
 typedef enum { DirStop = 0, DirForward = 1, DirReverse = 2 } MotorDirection_t;
 
@@ -81,6 +85,7 @@ typedef enum {
 /*---------------------------- Module Functions ---------------------------*/
 static void updatePlate(uint16_t now);
 static void setPlateDuty(uint8_t duty);
+static void setDispenser(bool running);
 static void plateOff(FollowState next, uint16_t now);
 static void failPlate(const char *reason, uint16_t now);
 static unsigned scaledPot(uint16_t pot, unsigned fullScale);
@@ -95,6 +100,8 @@ static uint8_t CurrentDuty = 0;
 static FollowState followState = Paused;
 static bool gameActive = false;
 static bool referenceAligned = false;
+static bool dispenserReady = false;
+static volatile uint16_t dispenserTicksLeft;
 
 static const char *const followNames[] = {
     "match knob", "holding", "coasting", "await 595",
@@ -233,6 +240,9 @@ void __ISR(_TIMER_2_VECTOR, IPL2SOFT) PlatePwmTimeoutISR(void)
         OC1RS = 0;
         pwmTimedOut = true;
     }
+    if (dispenserTicksLeft != 0u && --dispenserTicksLeft == 0u) {
+        OC2RS = 0;
+    }
 }
 
 static void plateOff(FollowState next, uint16_t now)
@@ -334,22 +344,21 @@ bool InitActuatorService(uint8_t Priority)
     if (INT1R == 2u) {
         IEC0SET = _IEC0_INT1IE_MASK;
     }
-    // Dispenser ENA: hold RB11 / PIC pin 22 low.
-    LATBCLR = (1u << 11);
-    OC2CONbits.ON = 0;
-    RPB11R = 0;
-    TRISBCLR = (1u << 11);
-
-    // Plate ENB: connect RB15 / PIC pin 26 to OC1 PWM.
+    // ENB (RB15 / pin 26) uses OC1; ENA (RB11 / pin 22) uses OC2.
     IEC0CLR = _IEC0_T2IE_MASK;
     T2CON = 0;
     OC1CON = 0;
+    OC2CON = 0;
     TMR2 = 0;
     PR2 = PWM_PERIOD_TICKS;          // 1 kHz with the project's 20 MHz PBCLK
     OC1R = 0;
     OC1RS = 0;
     RPB15R = OC_PPS_CODE;
     OC1CONbits.OCM = 0b110;
+    OC2R = 0;
+    OC2RS = 0;
+    RPB11R = OC_PPS_CODE;
+    OC2CONbits.OCM = 0b110;
 
     IPC2bits.T2IP = 2;
     IPC2bits.T2IS = 0;
@@ -363,10 +372,13 @@ bool InitActuatorService(uint8_t Priority)
     followState = Paused;
     gameActive = false;
     referenceAligned = false;
+    dispenserReady = false;
+    dispenserTicksLeft = 0;
     followReason = "none";
 
     IEC0SET = _IEC0_T2IE_MASK;
     OC1CONbits.ON = 1;
+    OC2CONbits.ON = 1;
     T2CONbits.ON = 1;
     return ES_PostToService(MyPriority, init);
 }
@@ -396,6 +408,8 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
     }
     else if (ThisEvent.EventType == ES_PLATE_START) {
         if (!gameActive) {
+            setDispenser(false);
+            dispenserReady = true;
             gameActive = true;
             referenceAligned = false;
             if (followState != PlateFault) {
@@ -406,6 +420,20 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
     else if (ThisEvent.EventType == ES_PLATE_STOP) {
         gameActive = false;
         plateOff(followState == PlateFault ? PlateFault : Paused, now);
+    }
+    else if (ThisEvent.EventType == ES_DISPENSE_TREAT) {
+        // GameService stops the plate first. Dispense only once per game.
+        if (!gameActive && dispenserReady) {
+            dispenserReady = false;
+            setDispenser(true);
+            DB_printf("Dispenser: start 10 s at %u%%; ENA map=%u OC2=0x%x PWM=%u ticks=%u\n",
+                      (unsigned)DISPENSER_DUTY, (unsigned)RPB11R,
+                      (unsigned)OC2CON, (unsigned)OC2RS,
+                      (unsigned)dispenserTicksLeft);
+        } else {
+            DB_printf("Dispenser: request ignored; game=%u ready=%u\n",
+                      (unsigned)gameActive, (unsigned)dispenserReady);
+        }
     }
     else if (ThisEvent.EventType == ES_TIMEOUT &&
              ThisEvent.EventParam == PLATE_SAMPLE_TIMER) {
@@ -427,6 +455,10 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
     else if (ThisEvent.EventType == ES_NEW_KEY) {
         switch (ThisEvent.EventParam) {
             case 'x':
+                setDispenser(false);
+                if (!gameActive) {
+                    dispenserReady = false;
+                }
                 if (followState != PlateFault) {
                     plateOff(Paused, now);
                 }
@@ -459,10 +491,11 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
 
                 DB_printf("A%u B%u count=%d pot=%u target=%u deg plate=%d deg\n",
                           a, b, (int)count, (unsigned)pot, targetDeg, plateDeg);
-                DB_printf("mode=%s duty=%u reason=%s game=%s\n",
+                DB_printf("mode=%s duty=%u reason=%s game=%s dispenser=%s\n",
                           followNames[followState],
                           (unsigned)(pwmTimedOut ? 0u : CurrentDuty),
-                          followReason, gameActive ? "on" : "off");
+                          followReason, gameActive ? "on" : "off",
+                          dispenserTicksLeft != 0u ? "on" : "off");
                 break;
             }
 
@@ -490,6 +523,17 @@ static void setPlateDuty(uint8_t duty)
     pwmTicksLeft = duty != 0u ? PWM_TIMEOUT_TICKS : 0u;
 
     IEC0SET = _IEC0_T2IE_MASK;
+}
+
+static void setDispenser(bool running)
+{
+    uint32_t timerEnabled = IEC0 & _IEC0_T2IE_MASK;
+    IEC0CLR = _IEC0_T2IE_MASK;
+
+    OC2RS = running ? DUTY_TO_OCRS(DISPENSER_DUTY) : 0u;
+    dispenserTicksLeft = running ? DISPENSER_RUN_TICKS : 0u;
+
+    IEC0SET = timerEnabled;
 }
 
 /*------------------------------ End of file ------------------------------*/
