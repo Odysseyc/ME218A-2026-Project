@@ -34,6 +34,9 @@ bool Check4PlateHalls(void);
 // false (0) when the food has been lifted off.
 bool IsFoodAtStart(void);
 
+// latest pickup Hall reading, 0 to 1023 (for checking the detection thresholds)
+uint16_t GetFoodStartReading(void);
+
 // latest potentiometer reading, 0 (one end) to 1023 (other end)
 uint16_t GetPotReading(void);
 

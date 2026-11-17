@@ -163,27 +163,22 @@ static uint8_t readTimeButtons(void)
 ****************************************************************************/
 bool Check4FoodSensor(void)
 {
-  static bool Initialized = false;
-  static bool LastFoodPresent = false;
+  static bool LastFoodPresent = false; // first confirmed presence posts ES_FOOD_PLACED
   bool FoodPresent = readFoodSensor();
   ES_Event_t ThisEvent;
-
-  if (!Initialized)
-  {
-    LastFoodPresent = FoodPresent;      // ignore whatever state we power up in
-    Initialized = true;
-    return false;
-  }
 
   if (FoodPresent == LastFoodPresent)
   {
     return false;
   }
 
-  LastFoodPresent = FoodPresent;
   ThisEvent.EventType = FoodPresent ? ES_FOOD_PLACED : ES_FOOD_REMOVED;
   ThisEvent.EventParam = 0;
-  PostGameService(ThisEvent);
+  if (!PostGameService(ThisEvent))
+  {
+    return false;                     // retry if the service queue was full
+  }
+  LastFoodPresent = FoodPresent;
   return true;
 }
 

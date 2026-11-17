@@ -70,8 +70,8 @@
 #define CAL_OUTLIER_GAP    40u    // min gap from the outlier to its nearest neighbor
 #define CAL_WARNING_MS     1000u  // how often to repeat the "unclear" message
 #define REPEAT_MS          200u   // repeat ES_FOOD_PASSED while the magnet stays
-#define FOOD_ON_COUNTS     700    // food-start reading above this = food on its spot
-#define FOOD_OFF_COUNTS    600    // below this = food lifted off (gap = hysteresis)
+#define FOOD_ON_COUNTS     550    // food-start reading above this = food on its spot
+#define FOOD_OFF_COUNTS    540    // below this = food lifted off (gap = hysteresis)
 #define FOOD_START_STABLE_READS 3
 #define POT_MOVE_COUNTS    25     // pot change that counts as the player turning it
 
@@ -95,8 +95,9 @@ static uint16_t LastCalWarning;
 
 static uint8_t Channel;                 // channel being read now (0 to 5)
 static uint8_t ActiveMask;              // bit n set = magnet at plate sensor n
-static bool FoodAtStart = true;         // the game assumes the food starts on its spot
+static bool FoodAtStart = false;        // require confirmed presence before removal
 static uint8_t FoodChangeReads = 0;
+static uint16_t FoodStartReading = 0;
 static uint16_t PotReading = 512;
 static uint16_t PotReported = 512;
 static bool PotSeen = false;
@@ -137,7 +138,8 @@ void InitAnalogInputs(void)
   }
   ActiveMask = 0;
   Channel = 0;
-  FoodAtStart = true;
+  FoodAtStart = false;
+  FoodChangeReads = 0;
   CalRetried = false;
   SamplesLeft = NUM_HALLS * CAL_SCANS;
   LastPollTime = 0;
@@ -184,6 +186,7 @@ bool Check4PlateHalls(void)
   }
   else if (CH_FOOD_START == Channel)
   {
+    FoodStartReading = Reading;
     bool ReadsOn  = (Reading >= FOOD_ON_COUNTS);
     bool ReadsOff = (Reading <= FOOD_OFF_COUNTS);
     if ((ReadsOn && !FoodAtStart) || (ReadsOff && FoodAtStart))
@@ -241,6 +244,11 @@ bool Check4PlateHalls(void)
 bool IsFoodAtStart(void)
 {
   return FoodAtStart;
+}
+
+uint16_t GetFoodStartReading(void)
+{
+  return FoodStartReading;
 }
 
 uint16_t GetPotReading(void)

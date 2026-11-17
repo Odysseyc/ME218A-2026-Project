@@ -10,6 +10,10 @@
 
    States: Welcome, SelectTime, Cooking, Won, Lost, ReturnFood
 
+   Lift the food from its pickup spot, put it on the plate, then select
+   30/45/60 seconds to start. Returning it before selecting cancels readiness.
+   Plate placement is confirmed by the player pressing the time button.
+
    After a game ends (or is abandoned) the 5 LEDs around the food's start
    position light up if the food is not back there yet (ReturnFood). Nothing
    starts until the food is put back (ES_FOOD_PLACED) and then lifted off
@@ -46,6 +50,7 @@
 #include "LEDMatrixService.h"
 #include "DisplayChainService.h"
 #include "ActuatorService.h"
+#include "AnalogInputs.h"
 
 /*----------------------------- Module Defines ----------------------------*/
 #define KEYBOARD_SIMULATION 1
@@ -86,7 +91,7 @@ static uint8_t GameSeconds = 0;
 static uint8_t SecondsElapsed = 0;
 static uint8_t CookedLevel = 0;
 static uint8_t LitLED = NO_LED;
-static bool FoodAtStart = true;         // assumes the food is in place at power-up
+static bool FoodAtStart = false;        // updated by confirmed food-sensor events
 
 static const uint8_t TimeChoiceSeconds[3] = {30, 45, 60};   // button 1, 2, 3
 // how long a plate LED stays lit, by difficulty (from Jeremy's easy/medium/hard)
@@ -99,6 +104,7 @@ bool InitGameService(uint8_t Priority)
 
   MyPriority = Priority;
   CurrentState = Welcome;
+  FoodAtStart = false;
 
   ThisEvent.EventType = ES_INIT;
   return ES_PostToService(MyPriority, ThisEvent);
@@ -123,6 +129,13 @@ ES_Event_t RunGameService(ES_Event_t ThisEvent)
 {
   ES_Event_t ReturnEvent;
   ReturnEvent.EventType = ES_NO_EVENT;
+
+  if ((ES_NEW_KEY == ThisEvent.EventType) && ('v' == ThisEvent.EventParam))
+  {
+    DB_printf("Food pickup: raw=%u present=%u\r\n",
+              (unsigned)GetFoodStartReading(), (unsigned)IsFoodAtStart());
+    return ReturnEvent;
+  }
 
 #if KEYBOARD_SIMULATION
   if (ES_NEW_KEY == ThisEvent.EventType)
@@ -169,8 +182,12 @@ ES_Event_t RunGameService(ES_Event_t ThisEvent)
 
     case SelectTime:
     {
-      if ((ES_TIME_SELECTED == ThisEvent.EventType) &&
-          (ThisEvent.EventParam >= 1) && (ThisEvent.EventParam <= 3))
+      if (ES_FOOD_PLACED == ThisEvent.EventType)
+      {
+        enterWelcome();               // require another removal before starting
+      }
+      else if ((ES_TIME_SELECTED == ThisEvent.EventType) && !FoodAtStart &&
+               (ThisEvent.EventParam >= 1) && (ThisEvent.EventParam <= 3))
       {
         startGame((uint8_t)ThisEvent.EventParam);
       }
