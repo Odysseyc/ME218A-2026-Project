@@ -48,6 +48,7 @@
 #include "terminal.h"
 #include "dbprintf.h"
 #include "ES_Timers.h"
+#include "ActuatorService.h"
 
 /*----------------------------- Module Defines ----------------------------*/
 #define SR_DATA   (1u << 8)     // RB8  -> 595 pin 14
@@ -115,25 +116,21 @@ ES_Event_t RunDisplayChainService(ES_Event_t ThisEvent)
     }
     break;
 
-    case ES_CHAIN_SET_LED:
-    {
-      // Param = (LED index << 8) | brightness. Any brightness above 0 is on.
-      uint8_t Index = (uint8_t)(ThisEvent.EventParam >> 8);
-      uint8_t Brightness = (uint8_t)(ThisEvent.EventParam & 0xFF);
-      if (Index < NUM_PLATE_LEDS)
-      {
-        if (Brightness > 0)
-        {
-          FirstBits |= PLATE_LED_BIT(Index);
-        }
-        else
-        {
-          FirstBits &= (uint8_t)~PLATE_LED_BIT(Index);
+   case ES_CHAIN_SET_LED:
+{
+    uint8_t index = (uint8_t)(ThisEvent.EventParam >> 8);
+    uint8_t brightness = (uint8_t)ThisEvent.EventParam;
+
+    if (index < NUM_PLATE_LEDS) {
+        if (brightness > 0u) {
+            FirstBits |= PLATE_LED_BIT(index);
+        } else {
+            FirstBits &= (uint8_t)~PLATE_LED_BIT(index);
         }
         sendChain();
-      }
     }
-    break;
+}
+break;
 
     case ES_CHAIN_SET_ALL:
     {
@@ -192,20 +189,23 @@ ES_Event_t RunDisplayChainService(ES_Event_t ThisEvent)
     break;
 
     case ES_CHAIN_SET_MOTOR_DIR:
-    {
-      // Param = 0 stop (both low), 1 forward (IN3 high), 2 reverse (IN4 high)
-      SecondBits &= (uint8_t)~(MOTOR_IN3_BIT | MOTOR_IN4_BIT);
-      if (MOTOR_DIR_FWD == ThisEvent.EventParam)
-      {
+{
+    uint8_t dir = (uint8_t)ThisEvent.EventParam;
+
+    SecondBits &= (uint8_t)~(MOTOR_IN3_BIT | MOTOR_IN4_BIT);
+    if (dir == MOTOR_DIR_FWD) {
         SecondBits |= MOTOR_IN3_BIT;
-      }
-      else if (MOTOR_DIR_REV == ThisEvent.EventParam)
-      {
+    } else if (dir == MOTOR_DIR_REV) {
         SecondBits |= MOTOR_IN4_BIT;
-      }
-      sendChain();
     }
-    break;
+
+    sendChain();
+
+    if ((ThisEvent.EventParam >> 8) != 0u) {
+        (void)PostActuatorService(ThisEvent);
+    }
+}
+break;
 
     case ES_CHAIN_SET_BELL:
     {

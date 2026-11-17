@@ -37,4 +37,6 @@ bool IsFoodAtStart(void);
 // latest potentiometer reading, 0 (one end) to 1023 (other end)
 uint16_t GetPotReading(void);
 
+bool TryGetPotReading(uint16_t *value);
+
 #endif /* AnalogInputs_H */

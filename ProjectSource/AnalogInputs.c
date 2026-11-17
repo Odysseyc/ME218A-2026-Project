@@ -100,6 +100,8 @@ static uint8_t FoodChangeReads = 0;
 static uint16_t PotReading = 512;
 static uint16_t PotReported = 512;
 static bool PotSeen = false;
+static bool HavePlatePotSample = false;
+static uint16_t LastPotSampleMs;
 static uint16_t LastPollTime;
 static uint16_t LastPostTime[NUM_HALLS];
 
@@ -139,6 +141,7 @@ void InitAnalogInputs(void)
   CalRetried = false;
   SamplesLeft = NUM_HALLS * CAL_SCANS;
   LastPollTime = 0;
+  HavePlatePotSample = false;
   startSample();
 }
 
@@ -162,6 +165,8 @@ bool Check4PlateHalls(void)
   if (CH_POT == Channel)
   {
     PotReading = Reading;
+    LastPotSampleMs = ES_Timer_GetTime();
+    HavePlatePotSample = true;  
     if (!PotSeen)
     {
       PotSeen = true;
@@ -241,6 +246,18 @@ bool IsFoodAtStart(void)
 uint16_t GetPotReading(void)
 {
   return PotReading;
+}
+
+bool TryGetPotReading(uint16_t *value)
+{
+    uint16_t ageMs = (uint16_t)(ES_Timer_GetTime() - LastPotSampleMs);
+
+    if (!HavePlatePotSample || ageMs >= 150u) {
+        return false;
+    }
+
+    *value = PotReading;
+    return true;
 }
 
 /***************************************************************************
