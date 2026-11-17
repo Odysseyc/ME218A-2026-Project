@@ -60,12 +60,13 @@
 #define FOLLOW_POT_MAX          1023
 #define FORWARD_COUNT_SIGN     -1     // Raw count sign when IN3 is high, IN4 low
 
-#define FOLLOW_MAX_DUTY   60u   // Maximum plate PWM
-#define FOLLOW_MIN_DUTY   50u   // Running duty near the target
+#define FOLLOW_MIN_DUTY       45u   // Running duty near the target
+#define FOLLOW_RUN_MAX_DUTY   50u   // Running duty far from the target
+#define FOLLOW_MAX_DUTY       60u   // Startup ceiling until movement is detected
 #define FOLLOW_DUTY_STEP  16u   // Rise by up to 16 percentage points per 20 ms
 
 #define STOP_BAND_COUNTS        4     // About 2 degrees
-#define RESTART_BAND_COUNTS     8     // About 4 degrees
+#define RESTART_BAND_COUNTS     6     // About 3 degrees
 #define COAST_MS                60u
 #define NO_PROGRESS_MS          300u
 #define MAX_DRIVE_MS            3000u
@@ -220,7 +221,7 @@ static void updatePlate(uint16_t now)
     // Request less PWM near the target and ramp up gradually.
     unsigned scale = distance < 90 ? (unsigned)distance : 90u;
     unsigned duty = FOLLOW_MIN_DUTY +
-                    scale * (FOLLOW_MAX_DUTY - FOLLOW_MIN_DUTY) / 90u;
+                scale * (FOLLOW_RUN_MAX_DUTY - FOLLOW_MIN_DUTY) / 90u;
     // Ramp toward the maximum until the encoder confirms movement.
     if (progressSince == driveSince) {
         duty = FOLLOW_MAX_DUTY;
