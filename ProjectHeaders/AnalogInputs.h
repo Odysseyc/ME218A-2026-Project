@@ -20,6 +20,7 @@
 #define HALL_EAST  1
 #define HALL_SOUTH 2
 #define HALL_WEST  3
+#define HALL_HELD_FLAG 0x0100u
 
 // Call once from main() before ES_Initialize. Sets up the pins and the ADC
 // and starts the Hall baseline calibration.
@@ -33,6 +34,7 @@ bool Check4PlateHalls(void);
 // true (1) when the Hall sensor at the food's start spot sees the magnet,
 // false (0) when the food has been lifted off.
 bool IsFoodAtStart(void);
+
 
 // latest pickup Hall reading, 0 to 1023 (for checking the detection thresholds)
 uint16_t GetFoodStartReading(void);

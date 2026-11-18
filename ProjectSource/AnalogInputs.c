@@ -221,15 +221,19 @@ bool Check4PlateHalls(void)
                      ((uint16_t)(Now - LastPostTime[Channel]) >= REPEAT_MS);
 
     if (Arrived || StillHere)
-    {
-      ActiveMask |= Bit;
-      LastPostTime[Channel] = Now;
-      ES_Event_t ThisEvent;
-      ThisEvent.EventType = ES_FOOD_PASSED;
-      ThisEvent.EventParam = Channel;
-      PostGameService(ThisEvent);
-      ReturnVal = true;
-    }
+{
+  ES_Event_t event = { ES_FOOD_PASSED, Channel };
+
+  if (StillHere) {
+    event.EventParam |= HALL_HELD_FLAG;
+  }
+
+  if (PostGameService(event)) {
+    ActiveMask |= Bit;
+    LastPostTime[Channel] = Now;
+    ReturnVal = true;
+  }
+}
     else if (Change <= RELEASE_COUNTS)
     {
       ActiveMask &= (uint8_t)~Bit;

@@ -46,6 +46,7 @@
 #include "ES_Port.h"
 #include "terminal.h"
 #include "dbprintf.h"
+#include "ES_Timers.h"
 
 #include "LEDMatrixService.h"
 #include "DisplayChainService.h"
@@ -65,9 +66,22 @@
 #define ONE_SEC             1000
 #define INACTIVITY_TIME_MS  20000     // spec: 20 s with no input resets the game
 #define RESULT_TIME_MS      10000     // spec: result may show for at most 30 s
+#define START_FLASH_MS      350u     // each plate's half of the flash cycle
+
+#define RETURN_WINDOW_MS    10000u
+#define RETURN_FLASH_MS       350u
+#define TIMEOUT_MESSAGE_MS   2000u
 
 /*------------------------------ Module Types -----------------------------*/
-typedef enum { Welcome = 0, SelectTime, Cooking, Won, Lost, ReturnFood } GameState_t;
+typedef enum {
+    Welcome = 0,
+    SelectTime,
+    Cooking,
+    Won,
+    Lost,
+    ReturnFood,
+    IdleTimeout
+} GameState_t;
 
 /*---------------------------- Module Functions ---------------------------*/
 static void postTo(bool (*PostFn)(ES_Event_t), ES_EventType_t Type, uint16_t Param);
@@ -81,6 +95,9 @@ static void turnOffLitLED(void);
 static void stopGameTimers(void);
 static void showMessage(DisplayMsg_t Message);
 static ES_Event_t keyToEvent(ES_Event_t KeyEvent);
+static void completeWin(void);
+static void enterIdleTimeout(void);
+static void showReturnCue(void);
 
 /*---------------------------- Module Variables ---------------------------*/
 static uint8_t MyPriority;
@@ -92,10 +109,15 @@ static uint8_t SecondsElapsed = 0;
 static uint8_t CookedLevel = 0;
 static uint8_t LitLED = NO_LED;
 static bool FoodAtStart = false;        // updated by confirmed food-sensor events
+static bool StartLightsOn;
+static uint8_t ScoredHallMask;   // one bit per microwave Hall
 
-static const uint8_t TimeChoiceSeconds[3] = {30, 45, 60};   // button 1, 2, 3
+// Button 1 = Easy, button 2 = Medium, button 3 = Hard.
+static const uint8_t TimeChoiceSeconds[3] = {75, 60, 45}; // button 1, 2, 3
 // how long a plate LED stays lit, by difficulty (from Jeremy's easy/medium/hard)
-static const uint16_t LEDOnTimeMs[3] = {2000, 1500, 1000};   // button 1, 2, 3
+static const uint16_t LEDOnTimeMs[3] = {2000, 1500, 1000};// button 1, 2, 3
+static uint8_t ReturnPhase;
+static uint16_t ReturnStarted;
 
 /*------------------------------ Module Code ------------------------------*/
 bool InitGameService(uint8_t Priority)
@@ -154,7 +176,7 @@ ES_Event_t RunGameService(ES_Event_t ThisEvent)
     enterWelcome();
     return ReturnEvent;
   }
-
+bool wasAtStart = FoodAtStart;
   if (ES_FOOD_REMOVED == ThisEvent.EventType)
   {
     FoodAtStart = false;
@@ -167,18 +189,36 @@ ES_Event_t RunGameService(ES_Event_t ThisEvent)
   switch (CurrentState)
   {
     case Welcome:
-    {
-      if (ES_FOOD_REMOVED == ThisEvent.EventType)
-      {
-        srand(ES_Timer_GetTime());                          // different LED order each game
-        postTo(PostDisplayChainService, ES_CHAIN_FLASH_TIME_LEDS, 1);
-        ES_Timer_InitTimer(GAME_INACTIVITY_TIMER, INACTIVITY_TIME_MS);
-        showMessage(MSG_SET_TIME);
-        CurrentState = SelectTime;
-        DB_printf("Welcome -> SelectTime\r\n");
-      }
-    }
-    break;
+{
+  if (ThisEvent.EventType == ES_TIMEOUT &&
+      ThisEvent.EventParam == GAME_RESULT_TIMER)
+  {
+    StartLightsOn = !StartLightsOn;
+    bool microwaveOn = FoodAtStart && !StartLightsOn;
+
+    postTo(PostDisplayChainService, ES_CHAIN_SET_START_LEDS, StartLightsOn);
+    postTo(PostDisplayChainService, ES_CHAIN_SET_ALL,
+           microwaveOn ? LED_FULL : LED_OFF);
+
+    ES_Timer_InitTimer(GAME_RESULT_TIMER, START_FLASH_MS);
+  }
+  else if (ThisEvent.EventType == ES_FOOD_REMOVED && wasAtStart)
+  {
+    ES_Timer_StopTimer(GAME_RESULT_TIMER);
+
+    StartLightsOn = false;
+    postTo(PostDisplayChainService, ES_CHAIN_SET_START_LEDS, 0);
+    postTo(PostDisplayChainService, ES_CHAIN_SET_ALL, LED_FULL);
+    postTo(PostDisplayChainService, ES_CHAIN_FLASH_TIME_LEDS, 1);
+
+    srand(ES_Timer_GetTime());
+    ES_Timer_InitTimer(GAME_INACTIVITY_TIMER, INACTIVITY_TIME_MS);
+    showMessage(MSG_SET_TIME);
+    CurrentState = SelectTime;
+    DB_printf("Welcome -> SelectTime\r\n");
+  }
+}
+break;
 
     case SelectTime:
     {
@@ -195,13 +235,10 @@ ES_Event_t RunGameService(ES_Event_t ThisEvent)
       {
         ES_Timer_InitTimer(GAME_INACTIVITY_TIMER, INACTIVITY_TIME_MS);
       }
-      else if ((ES_TIMEOUT == ThisEvent.EventType) &&
-               (GAME_INACTIVITY_TIMER == ThisEvent.EventParam))
-      {
-        DB_printf("No input for 20 s: leaving SelectTime\r\n");
-        showMessage(MSG_TIMEOUT);
-        returnToIdle();
-      }
+      else if (ThisEvent.EventType == ES_TIMEOUT &&
+         ThisEvent.EventParam == GAME_INACTIVITY_TIMER) {
+    enterIdleTimeout();
+}
     }
     break;
 
@@ -210,27 +247,38 @@ ES_Event_t RunGameService(ES_Event_t ThisEvent)
       switch (ThisEvent.EventType)
       {
         case ES_FOOD_PASSED:
-        {
-          // the food reached an LED: only the lit one counts
-          if ((ThisEvent.EventParam == LitLED) && (CookedLevel < HITS_NEEDED))
-          {
-            ES_Timer_StopTimer(LED_ON_TIMER);
-            turnOffLitLED();
-            CookedLevel++;
-            postTo(PostLEDMatrixService, ES_MATRIX_SET_COOKED, CookedLevel);
-            ES_Timer_InitTimer(GAME_INACTIVITY_TIMER, INACTIVITY_TIME_MS);
-            DB_printf("Hit! cooked level %d of %d\r\n", CookedLevel, HITS_NEEDED);
-            if (CookedLevel >= HITS_NEEDED)
-            {
-              postTo(PostGameService, ES_COOKED, 0);
-            }
-            else
-            {
-              lightNewLED();
-            }
-          }
-        }
-        break;
+{
+  uint8_t hall = (uint8_t)ThisEvent.EventParam;
+  if (hall >= NUM_PLATE_LEDS) {
+    break;
+  }
+
+  uint8_t bit = (uint8_t)(1u << hall);
+  bool freshArrival = (ThisEvent.EventParam & HALL_HELD_FLAG) == 0u;
+
+  if (freshArrival) {
+    ScoredHallMask &= (uint8_t)~bit;
+    ES_Timer_InitTimer(GAME_INACTIVITY_TIMER, INACTIVITY_TIME_MS);
+  }
+
+  if (hall == LitLED && !(ScoredHallMask & bit) && CookedLevel < HITS_NEEDED)
+  {
+    ScoredHallMask |= bit;
+    ES_Timer_StopTimer(LED_ON_TIMER);
+    turnOffLitLED();
+
+    CookedLevel++;
+    postTo(PostLEDMatrixService, ES_MATRIX_SET_COOKED, CookedLevel);
+    DB_printf("Hit! cooked level %d of %d\r\n", CookedLevel, HITS_NEEDED);
+
+    if (CookedLevel >= HITS_NEEDED) {
+      postTo(PostGameService, ES_COOKED, 0);
+    } else {
+      lightNewLED();
+    }
+  }
+}
+break;
 
         case ES_TIMEOUT:
         {
@@ -254,12 +302,9 @@ ES_Event_t RunGameService(ES_Event_t ThisEvent)
               ES_Timer_InitTimer(GAME_CLOCK_TIMER, ONE_SEC);
             }
           }
-          else if (GAME_INACTIVITY_TIMER == ThisEvent.EventParam)
-          {
-            DB_printf("No input for 20 s: leaving Cooking\r\n");
-            showMessage(MSG_TIMEOUT);
-            returnToIdle();
-          }
+          else if (ThisEvent.EventParam == GAME_INACTIVITY_TIMER) {
+    enterIdleTimeout();
+        }
         }
         break;
 
@@ -289,27 +334,44 @@ ES_Event_t RunGameService(ES_Event_t ThisEvent)
     }
     break;
 
-    case Won:
-    case Lost:
-    {
-      if ((ES_TIMEOUT == ThisEvent.EventType) &&
-          (GAME_RESULT_TIMER == ThisEvent.EventParam))
-      {
-        DB_printf("Result done\r\n");
+case Won:
+case Lost:
+case IdleTimeout:
+{
+    if (ThisEvent.EventType == ES_TIMEOUT &&
+        ThisEvent.EventParam == GAME_RESULT_TIMER) {
         returnToIdle();
-      }
     }
-    break;
+}
+break;
 
-    case ReturnFood:
-    {
-      // buttons and everything else are ignored until the food is back
-      if (ES_FOOD_PLACED == ThisEvent.EventType)
-      {
+case ReturnFood:
+{
+    uint16_t elapsed =
+        (uint16_t)(ES_Timer_GetTime() - ReturnStarted);
+
+    if (elapsed >= RETURN_WINDOW_MS) {
+        // The reward window has ended.
         enterWelcome();
-      }
     }
-    break;
+    else if (ThisEvent.EventType == ES_FOOD_PLACED) {
+        completeWin();
+    }
+    else if (ThisEvent.EventType == ES_TIMEOUT &&
+             ThisEvent.EventParam == GAME_RESULT_TIMER) {
+
+        ReturnPhase = (uint8_t)((ReturnPhase + 1u) % 3u);
+        showReturnCue();
+
+        // Schedule the next flash, or the exact end of the return window.
+        uint16_t remaining = RETURN_WINDOW_MS - elapsed;
+        uint16_t delay =
+            remaining < RETURN_FLASH_MS ? remaining : RETURN_FLASH_MS;
+
+        ES_Timer_InitTimer(GAME_RESULT_TIMER, delay);
+    }
+}
+break;
 
     default:
     {}
@@ -351,7 +413,9 @@ static void enterWelcome(void)
   postTo(PostActuatorService, ES_PLATE_STOP, 0);
   postTo(PostDisplayChainService, ES_CHAIN_FLASH_TIME_LEDS, 0);
   postTo(PostDisplayChainService, ES_CHAIN_SET_ALL, LED_OFF);
-  postTo(PostDisplayChainService, ES_CHAIN_SET_START_LEDS, 0);
+  StartLightsOn = true;
+postTo(PostDisplayChainService, ES_CHAIN_SET_START_LEDS, 1);
+ES_Timer_InitTimer(GAME_RESULT_TIMER, START_FLASH_MS);
   postTo(PostLEDMatrixService, ES_MATRIX_CLEAR, 0);
   showMessage(MSG_WELCOME);
 
@@ -361,36 +425,80 @@ static void enterWelcome(void)
 
 // the game is over but the food is not back at its start position yet:
 // light the 5 LEDs around that spot and wait for the food to be put back
-static void enterReturnFood(void)
+static void showReturnCue(void)
 {
-  stopGameTimers();
-  Difficulty = 0;
-  GameSeconds = 0;
-  SecondsElapsed = 0;
-  CookedLevel = 0;
-  LitLED = NO_LED;
+    // Phase 0: microwave LEDs on.
+    // Phase 1: starter LEDs on.
+    // Phase 2: both off.
+    postTo(PostDisplayChainService,
+           ES_CHAIN_SET_START_LEDS,
+           ReturnPhase == 1u);
 
-  postTo(PostActuatorService, ES_PLATE_STOP, 0);
-  postTo(PostDisplayChainService, ES_CHAIN_FLASH_TIME_LEDS, 0);
-  postTo(PostDisplayChainService, ES_CHAIN_SET_ALL, LED_OFF);
-  postTo(PostDisplayChainService, ES_CHAIN_SET_START_LEDS, 1);
-  // the matrix keeps showing the last message (DING!, TIME UP or TOO SLOW)
-
-  CurrentState = ReturnFood;
-  DB_printf("State: ReturnFood (put the food back)\r\n");
+    postTo(PostDisplayChainService,
+           ES_CHAIN_SET_ALL,
+           ReturnPhase == 0u ? LED_FULL : LED_OFF);
 }
 
-// every way a game can end (win, lose, timeout) comes through here
+static void enterReturnFood(void)
+{
+    stopGameTimers();
+
+    postTo(PostActuatorService, ES_PLATE_STOP, 0);
+    postTo(PostDisplayChainService, ES_CHAIN_FLASH_TIME_LEDS, 0);
+
+    LitLED = NO_LED;
+    CurrentState = ReturnFood;
+
+    // If the food is already back, complete the win immediately.
+    if (FoodAtStart) {
+        completeWin();
+        return;
+    }
+
+    // Blank the timer message while leaving the full cooked bar visible.
+    showMessage(MSG_BLANK);
+
+    ReturnStarted = ES_Timer_GetTime();
+    ReturnPhase = 0;
+
+    showReturnCue();
+    ES_Timer_InitTimer(GAME_RESULT_TIMER, RETURN_FLASH_MS);
+}
+
+static void completeWin(void)
+{
+    stopGameTimers();
+    CurrentState = Won;
+
+    showMessage(MSG_DONE);
+
+    // Parameter 2 selects the new two-flash celebration.
+    postTo(PostDisplayChainService, ES_CHAIN_FLASH_TIME_LEDS, 2);
+
+    postTo(PostActuatorService, ES_PLAY_DING, 0);
+    postTo(PostActuatorService, ES_DISPENSE_TREAT, 0);
+
+    ES_Timer_InitTimer(GAME_RESULT_TIMER, RESULT_TIME_MS);
+}
+
+static void enterIdleTimeout(void)
+{
+    stopGameTimers();
+    CurrentState = IdleTimeout;
+    LitLED = NO_LED;
+
+    postTo(PostActuatorService, ES_PLATE_STOP, 0);
+    postTo(PostDisplayChainService, ES_CHAIN_FLASH_TIME_LEDS, 0);
+    postTo(PostDisplayChainService, ES_CHAIN_SET_ALL, LED_OFF);
+    postTo(PostDisplayChainService, ES_CHAIN_SET_START_LEDS, 0);
+
+    showMessage(MSG_TIMEOUT);
+    ES_Timer_InitTimer(GAME_RESULT_TIMER, TIMEOUT_MESSAGE_MS);
+}
+
 static void returnToIdle(void)
 {
-  if (FoodAtStart)
-  {
     enterWelcome();
-  }
-  else
-  {
-    enterReturnFood();
-  }
 }
 
 // choice is the button number: 1, 2 or 3. It is also the difficulty.
@@ -408,7 +516,9 @@ static void startGame(uint8_t Choice)
   postTo(PostLEDMatrixService, ES_MATRIX_SHOW_CLOCK, 0);
   postTo(PostActuatorService, ES_PLATE_START, 0);
 
-  lightNewLED();
+  ScoredHallMask = 0;
+postTo(PostDisplayChainService, ES_CHAIN_SET_ALL, LED_OFF);
+lightNewLED();
   ES_Timer_InitTimer(GAME_CLOCK_TIMER, ONE_SEC);
   ES_Timer_InitTimer(GAME_INACTIVITY_TIMER, INACTIVITY_TIME_MS);
 
@@ -418,25 +528,19 @@ static void startGame(uint8_t Choice)
 
 static void finishGame(bool PlayerWon)
 {
-  stopGameTimers();
-  postTo(PostActuatorService, ES_PLATE_STOP, 0);
-  turnOffLitLED();
+    if (PlayerWon) {
+        enterReturnFood();
+        return;
+    }
 
-  if (PlayerWon)
-  {
-    postTo(PostActuatorService, ES_PLAY_DING, 0);
-    postTo(PostActuatorService, ES_DISPENSE_TREAT, 0);
-    showMessage(MSG_DONE);
-    CurrentState = Won;
-    DB_printf("Cooking -> Won\r\n");
-  }
-  else
-  {
+    stopGameTimers();
+    postTo(PostActuatorService, ES_PLATE_STOP, 0);
+    turnOffLitLED();
+
     showMessage(MSG_TIME_UP);
     CurrentState = Lost;
-    DB_printf("Cooking -> Lost (cooked level %d of %d)\r\n", CookedLevel, HITS_NEEDED);
-  }
-  ES_Timer_InitTimer(GAME_RESULT_TIMER, RESULT_TIME_MS);
+
+    ES_Timer_InitTimer(GAME_RESULT_TIMER, RESULT_TIME_MS);
 }
 
 // pick a random plate LED that is not the one that was just lit, and light it

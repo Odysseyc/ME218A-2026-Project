@@ -79,6 +79,7 @@ static uint8_t MyPriority;
 static uint8_t FirstBits = 0;           // first 595 (bell, plate, time LEDs)
 static uint8_t SecondBits = 0;          // second 595 (start-spot LEDs)
 static bool Flashing = false;
+static uint8_t WinFlashSteps = 0;
 
 /*------------------------------ Module Code ------------------------------*/
 bool InitDisplayChainService(uint8_t Priority)
@@ -161,32 +162,64 @@ break;
     break;
 
     case ES_CHAIN_FLASH_TIME_LEDS:
-    {
-      Flashing = (ThisEvent.EventParam != 0);
-      FirstBits &= (uint8_t)~TIME_LED_BITS;
-      if (Flashing)
-      {
-        FirstBits |= TIME_LED_BITS;     // start with them on
-        ES_Timer_InitTimer(CHAIN_TIMER, FLASH_MS);
-      }
-      else
-      {
-        ES_Timer_StopTimer(CHAIN_TIMER);
-      }
-      sendChain();
+{
+    // Clean up any celebration that was interrupted.
+    if (WinFlashSteps > 0u) {
+        FirstBits &= (uint8_t)~ALL_PLATE_LEDS;
+        SecondBits &= (uint8_t)~START_LED_BITS;
     }
-    break;
 
-    case ES_TIMEOUT:
-    {
-      if ((CHAIN_TIMER == ThisEvent.EventParam) && Flashing)
-      {
-        FirstBits ^= TIME_LED_BITS;
-        sendChain();
-        ES_Timer_InitTimer(CHAIN_TIMER, FLASH_MS);
-      }
+    WinFlashSteps = 0;
+    Flashing = (ThisEvent.EventParam != 0u);
+
+    FirstBits &= (uint8_t)~TIME_LED_BITS;
+    ES_Timer_StopTimer(CHAIN_TIMER);
+
+    if (ThisEvent.EventParam == 2u) {
+        // Begin two flashes: ON, OFF, ON, OFF.
+        // Three timer-driven changes remain after this initial ON.
+        WinFlashSteps = 3u;
+
+        FirstBits |= ALL_PLATE_LEDS | TIME_LED_BITS;
+        SecondBits |= START_LED_BITS;
     }
-    break;
+    else if (Flashing) {
+        // Normal SelectTime behavior: flash only the time buttons.
+        FirstBits |= TIME_LED_BITS;
+    }
+
+    sendChain();
+
+    if (Flashing) {
+        ES_Timer_InitTimer(CHAIN_TIMER, FLASH_MS);
+    }
+}
+break;
+
+case ES_TIMEOUT:
+{
+    if (ThisEvent.EventParam == CHAIN_TIMER && Flashing) {
+        FirstBits ^= TIME_LED_BITS;
+
+        if (WinFlashSteps > 0u) {
+            FirstBits ^= ALL_PLATE_LEDS;
+            SecondBits ^= START_LED_BITS;
+
+            WinFlashSteps--;
+
+            if (WinFlashSteps == 0u) {
+                Flashing = false;
+            }
+        }
+
+        sendChain();
+
+        if (Flashing) {
+            ES_Timer_InitTimer(CHAIN_TIMER, FLASH_MS);
+        }
+    }
+}
+break;
 
     case ES_CHAIN_SET_MOTOR_DIR:
 {

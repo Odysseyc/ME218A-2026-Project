@@ -76,6 +76,8 @@
 #define DISPENSER_RUN_TICKS     10000u // 10 seconds on the 1 kHz Timer2
 
 #define OC_PPS_CODE          0b0101       // RPB15R = OC1; RPB11R = OC2
+#define DING_TIME_MS 400u
+
 
 typedef enum { DirStop = 0, DirForward = 1, DirReverse = 2 } MotorDirection_t;
 
@@ -117,6 +119,10 @@ static uint16_t offSince, requestSince, progressSince, driveSince;
 static uint16_t directionRequest;
 static int32_t previousPosition, progressPosition;
 static int driveSign;
+
+static bool BellOn = false;
+static uint16_t BellStarted;
+
 
 /*------------------------------ Module Code ------------------------------*/
 static void updatePlate(uint16_t now)
@@ -394,6 +400,16 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
     ES_Event_t result = { ES_NO_EVENT, 0 };
     uint16_t now = ES_Timer_GetTime();
 
+    if (BellOn &&
+    (uint16_t)(now - BellStarted) >= DING_TIME_MS) {
+
+    ES_Event_t bell = { ES_CHAIN_SET_BELL, 0 };
+
+    if (PostDisplayChainService(bell)) {
+        BellOn = false;
+    }
+}
+
     if (pwmTimedOut && followState != PlateFault) {
         failPlate("control timeout", now);
     }
@@ -422,6 +438,14 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
         gameActive = false;
         plateOff(followState == PlateFault ? PlateFault : Paused, now);
     }
+    else if (ThisEvent.EventType == ES_PLAY_DING) {
+    ES_Event_t bell = { ES_CHAIN_SET_BELL, 1 };
+
+    if (PostDisplayChainService(bell)) {
+        BellOn = true;
+        BellStarted = now;
+    }
+}
     else if (ThisEvent.EventType == ES_DISPENSE_TREAT) {
         // GameService stops the plate first. Dispense only once per game.
         if (!gameActive && dispenserReady) {
