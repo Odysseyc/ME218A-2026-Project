@@ -52,7 +52,7 @@ static void StartRefresh(void);
 static void PostNextStep(void);
 static void DrawTime(uint16_t Seconds);
 static void DrawText(uint8_t WhichDisplay, const char *pText);
-static void DrawCookBar(uint16_t Level);
+static void DrawCookBar(uint16_t HalfPoints);
 
 /*---------------------------- Module Variables ---------------------------*/
 static uint8_t MyPriority;
@@ -65,7 +65,7 @@ static uint16_t              SecondsToShow = 0;
 static DisplayMsg_t          MessageToShow = MSG_BLANK;
 static bool                  TimerDisplayChanged = false;
  
-static uint16_t              CookLevelToShow = 0;
+static uint16_t              CookHalfPointsToShow = 0;
 static bool                  CookDisplayChanged = false;
 
 static const char * const MessageText[NUM_DISPLAY_MSGS] =
@@ -192,7 +192,7 @@ static bool SaveRequest(ES_Event_t ThisEvent)
       TimerDisplayContent = ShowingMessage;
       MessageToShow       = MSG_BLANK;
       TimerDisplayChanged = true;
-      CookLevelToShow     = 0;
+      CookHalfPointsToShow     = 0;
       CookDisplayChanged  = true;
     }
     break;
@@ -231,7 +231,7 @@ static bool SaveRequest(ES_Event_t ThisEvent)
 
     case ES_MATRIX_SET_COOKED:
     {
-      CookLevelToShow = ThisEvent.EventParam;
+      CookHalfPointsToShow = ThisEvent.EventParam;
       CookDisplayChanged = true;
     }
     break;
@@ -285,7 +285,7 @@ static void StartRefresh(void)
   if (true == CookDisplayChanged)
   {
     CookDisplayChanged = false;
-    DrawCookBar(CookLevelToShow);
+    DrawCookBar(CookHalfPointsToShow);
   }
  
   PostNextStep();
@@ -396,25 +396,25 @@ static void DrawText(uint8_t WhichDisplay, const char *pText)
    DrawCookBar
  
  Parameters
-   uint16_t : cook level, 0 (raw) to COOK_LEVEL_MAX (done)
+   uint16_t : half-points, 0 (raw) to 2 * COOK_LEVEL_MAX (done)
  
  Description
    Lights the same run of columns in all 8 rows, so the display (mounted on
-   its side) shows a solid bar. The level is scaled to the 32 columns,
-   rounding down, so the bar is only completely full at COOK_LEVEL_MAX.
+   its side) shows a solid bar. Half-points are scaled to the 32 columns,
+   so the bar is only completely full at COOK_LEVEL_MAX points.
 ****************************************************************************/
-static void DrawCookBar(uint16_t Level)
+static void DrawCookBar(uint16_t HalfPoints)
 {
   uint32_t ColsLit;
   uint32_t BarBits;
   uint8_t  Row;
  
-  if (Level > COOK_LEVEL_MAX)
+  if (HalfPoints > 2u * COOK_LEVEL_MAX)
   {
-    Level = COOK_LEVEL_MAX;
+    HalfPoints = 2u * COOK_LEVEL_MAX;
   }
  
-  ColsLit = ((uint32_t)Level * DISPLAY_COLS) / COOK_LEVEL_MAX;
+  ColsLit = ((uint32_t)HalfPoints * DISPLAY_COLS) / (2u * COOK_LEVEL_MAX);
  
   if (0 == ColsLit)
   {

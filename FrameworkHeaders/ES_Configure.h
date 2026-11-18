@@ -280,7 +280,7 @@ typedef enum
 
   /* ---- Commands from GameService to the LED matrix (LEDMatrixService) ---- */
   ES_MATRIX_CLEAR,          /* blank the matrix. Param unused */
-  ES_MATRIX_SET_COOKED,     /* show the cooked level. Param = level, 0 (lowest) to MATRIX_MAX_COOKED_LEVEL */
+  ES_MATRIX_SET_COOKED,     /* Param = half-points, 0 to 2 * MATRIX_MAX_COOKED_LEVEL */
   ES_MATRIX_SHOW_CLOCK,     /* show elapsed game time. Param = seconds elapsed */
   ES_MATRIX_SHOW_MSG,       /* show a message on the timer display. Param = DisplayMsg_t (LEDMatrixService.h) */
   ES_MATRIX_STEP_DONE,      /* internal to LEDMatrixService: one display step finished, do the next */
@@ -377,7 +377,7 @@ typedef enum
 /* timers 9 to 15 are free: claim one with a small pull request to main */
 
 /* number of LED hits that fill the cooked-level display (shared by GameService and LEDMatrixService) */
-#define MATRIX_MAX_COOKED_LEVEL 8
+#define MATRIX_MAX_COOKED_LEVEL 16
 
 
 #endif /* ES_CONFIGURE_H */

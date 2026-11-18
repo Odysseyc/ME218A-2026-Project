@@ -5,13 +5,13 @@
  Description
    Game state machine for the whack-a-mole microwave. One of the 4 plate LEDs
    lights at random. The player spins the plate to it before it turns off.
-   Each hit fills the cooked-level display a bit. Fill it before the game
+   Each hit fills two display columns. Hit 16 targets before the game
    clock runs out and the player wins (ding and TREAT).
 
    States: Welcome, SelectTime, Cooking, Won, Lost, ReturnFood
 
    Lift the food from its pickup spot, put it on the plate, then select
-   30/45/60 seconds to start. Returning it before selecting cancels readiness.
+   45/60/75 seconds to start. Returning it before selecting cancels readiness.
    Plate placement is confirmed by the player pressing the time button.
 
    After a game ends (or is abandoned) the 5 LEDs around the food's start
@@ -62,11 +62,13 @@
 #define LED_OFF             0
 
 #define HITS_NEEDED         MATRIX_MAX_COOKED_LEVEL
+#define MIN_GAME_TIME_MS   30000u
 
 #define ONE_SEC             1000
 #define INACTIVITY_TIME_MS  20000     // spec: 20 s with no input resets the game
 #define RESULT_TIME_MS      10000     // spec: result may show for at most 30 s
 #define START_FLASH_MS      350u     // each plate's half of the flash cycle
+#define TARGET_PERIOD_MS   2500u     // Fixed start-to-start target spacing
 
 #define RETURN_WINDOW_MS    10000u
 #define RETURN_FLASH_MS       350u
@@ -106,8 +108,12 @@ static GameState_t CurrentState;
 static uint8_t Difficulty = 0;          // 0 = none yet, otherwise 1, 2 or 3
 static uint8_t GameSeconds = 0;
 static uint8_t SecondsElapsed = 0;
-static uint8_t CookedLevel = 0;
+static uint8_t HitCount = 0;
+static uint16_t GameStarted;
+static bool WinTimeReady = false;
 static uint8_t LitLED = NO_LED;
+static bool WaitingForLED = false;
+static uint16_t LEDSlotStarted;
 static bool FoodAtStart = false;        // updated by confirmed food-sensor events
 static bool StartLightsOn;
 static uint8_t ScoredHallMask;   // one bit per microwave Hall
@@ -115,7 +121,7 @@ static uint8_t ScoredHallMask;   // one bit per microwave Hall
 // Button 1 = Easy, button 2 = Medium, button 3 = Hard.
 static const uint8_t TimeChoiceSeconds[3] = {75, 60, 45}; // button 1, 2, 3
 // how long a plate LED stays lit, by difficulty (from Jeremy's easy/medium/hard)
-static const uint16_t LEDOnTimeMs[3] = {2000, 1500, 1000};// button 1, 2, 3
+static const uint16_t LEDOnTimeMs[3] = {2000, 1700, 1000};// button 1, 2, 3
 static uint8_t ReturnPhase;
 static uint16_t ReturnStarted;
 
@@ -151,6 +157,12 @@ ES_Event_t RunGameService(ES_Event_t ThisEvent)
 {
   ES_Event_t ReturnEvent;
   ReturnEvent.EventType = ES_NO_EVENT;
+
+  // Latch the minimum play time before the 16-bit clock wraps.
+  if (CurrentState == Cooking && !WinTimeReady &&
+      (uint16_t)(ES_Timer_GetTime() - GameStarted) > MIN_GAME_TIME_MS) {
+    WinTimeReady = true;
+  }
 
   if ((ES_NEW_KEY == ThisEvent.EventType) && ('v' == ThisEvent.EventParam))
   {
@@ -261,20 +273,25 @@ break;
     ES_Timer_InitTimer(GAME_INACTIVITY_TIMER, INACTIVITY_TIME_MS);
   }
 
-  if (hall == LitLED && !(ScoredHallMask & bit) && CookedLevel < HITS_NEEDED)
+  uint16_t elapsed = (uint16_t)(ES_Timer_GetTime() - LEDSlotStarted);
+  if (!WaitingForLED && elapsed < LEDOnTimeMs[Difficulty - 1] &&
+      hall == LitLED && !(ScoredHallMask & bit) && HitCount < HITS_NEEDED)
   {
     ScoredHallMask |= bit;
     ES_Timer_StopTimer(LED_ON_TIMER);
     turnOffLitLED();
+    WaitingForLED = true;
 
-    CookedLevel++;
-    postTo(PostLEDMatrixService, ES_MATRIX_SET_COOKED, CookedLevel);
-    DB_printf("Hit! cooked level %d of %d\r\n", CookedLevel, HITS_NEEDED);
+    HitCount++;
+    // The matrix event uses half-point units: two units per whole hit.
+    postTo(PostLEDMatrixService, ES_MATRIX_SET_COOKED, 2u * HitCount);
+    DB_printf("Hit! %u of %u\r\n", (unsigned)HitCount, (unsigned)HITS_NEEDED);
 
-    if (CookedLevel >= HITS_NEEDED) {
+    if (WinTimeReady && HitCount >= HITS_NEEDED) {
       postTo(PostGameService, ES_COOKED, 0);
     } else {
-      lightNewLED();
+      // A quick hit does not bring the next target forward.
+      ES_Timer_InitTimer(LED_ON_TIMER, TARGET_PERIOD_MS - elapsed);
     }
   }
 }
@@ -284,10 +301,27 @@ break;
         {
           if (LED_ON_TIMER == ThisEvent.EventParam)
           {
-            // missed this one: it turns off and a new one lights
-            // (a penalty for a miss is not decided yet)
-            turnOffLitLED();
-            lightNewLED();
+            uint16_t onTime = LEDOnTimeMs[Difficulty - 1];
+            uint16_t elapsed = (uint16_t)(ES_Timer_GetTime() - LEDSlotStarted);
+
+            if (elapsed >= TARGET_PERIOD_MS) {
+              turnOffLitLED();
+              // Keep the original schedule; skip slots missed by a late event.
+              LEDSlotStarted += (elapsed / TARGET_PERIOD_MS) * TARGET_PERIOD_MS;
+              elapsed %= TARGET_PERIOD_MS;
+              WaitingForLED = true;
+              if (elapsed < onTime) {
+                lightNewLED();
+              }
+            }
+            if (!WaitingForLED && elapsed >= onTime) {
+              turnOffLitLED();
+              WaitingForLED = true;
+            }
+
+            // Early or queued timeouts only rearm the remaining interval.
+            ES_Timer_InitTimer(LED_ON_TIMER,
+                (WaitingForLED ? TARGET_PERIOD_MS : onTime) - elapsed);
           }
           else if (GAME_CLOCK_TIMER == ThisEvent.EventParam)
           {
@@ -317,7 +351,9 @@ break;
 
         case ES_COOKED:
         {
-          finishGame(true);
+          if (WinTimeReady && HitCount >= HITS_NEEDED) {
+            finishGame(true);
+          }
         }
         break;
 
@@ -394,6 +430,7 @@ static void postTo(bool (*PostFn)(ES_Event_t), ES_EventType_t Type, uint16_t Par
 
 static void stopGameTimers(void)
 {
+  WaitingForLED = false;
   ES_Timer_StopTimer(GAME_INACTIVITY_TIMER);
   ES_Timer_StopTimer(GAME_CLOCK_TIMER);
   ES_Timer_StopTimer(GAME_RESULT_TIMER);
@@ -407,7 +444,8 @@ static void enterWelcome(void)
   Difficulty = 0;
   GameSeconds = 0;
   SecondsElapsed = 0;
-  CookedLevel = 0;
+  HitCount = 0;
+  WinTimeReady = false;
   LitLED = NO_LED;
 
   postTo(PostActuatorService, ES_PLATE_STOP, 0);
@@ -506,8 +544,10 @@ static void startGame(uint8_t Choice)
 {
   Difficulty = Choice;
   GameSeconds = TimeChoiceSeconds[Choice - 1];
+  GameStarted = ES_Timer_GetTime();
   SecondsElapsed = 0;
-  CookedLevel = 0;
+  HitCount = 0;
+  WinTimeReady = false;
   LitLED = NO_LED;
 
   postTo(PostDisplayChainService, ES_CHAIN_FLASH_TIME_LEDS, 0);
@@ -518,7 +558,9 @@ static void startGame(uint8_t Choice)
 
   ScoredHallMask = 0;
 postTo(PostDisplayChainService, ES_CHAIN_SET_ALL, LED_OFF);
+LEDSlotStarted = GameStarted;
 lightNewLED();
+  ES_Timer_InitTimer(LED_ON_TIMER, LEDOnTimeMs[Difficulty - 1]);
   ES_Timer_InitTimer(GAME_CLOCK_TIMER, ONE_SEC);
   ES_Timer_InitTimer(GAME_INACTIVITY_TIMER, INACTIVITY_TIME_MS);
 
@@ -553,8 +595,8 @@ static void lightNewLED(void)
   } while (NewLED == LitLED);
 
   LitLED = NewLED;
+  WaitingForLED = false;
   postTo(PostDisplayChainService, ES_CHAIN_SET_LED, (uint16_t)((LitLED << 8) | LED_FULL));
-  ES_Timer_InitTimer(LED_ON_TIMER, LEDOnTimeMs[Difficulty - 1]);
   DB_printf("LED %d lit\r\n", LitLED);
 }
 

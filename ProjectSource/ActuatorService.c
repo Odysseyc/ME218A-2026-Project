@@ -12,7 +12,7 @@
      Encoder A RB0 / pin 4; encoder B RB1 / pin 5
      Pot       RB12 / pin 23, read by AnalogInputs
    Dispenser (L298N channel A): ENA RB11 / pin 22, OC2 PWM;
-     IN1 = 3.3 V, IN2 = GND. Runs for 10 seconds after a win.
+     IN1 = 3.3 V, IN2 = GND. Runs for 3.4 seconds after a win.
 
  Notes
    Follows the knob only during a game; aligns without moving at each start.
@@ -68,12 +68,9 @@
 #define STOP_BAND_COUNTS        4     // About 2 degrees
 #define RESTART_BAND_COUNTS     6     // About 3 degrees
 #define COAST_MS                60u
-#define NO_PROGRESS_MS          300u
-#define MAX_DRIVE_MS            3000u
-#define PWM_TIMEOUT_TICKS       100u  // About 100 ms at 1 kHz
 
-#define DISPENSER_DUTY          75u
-#define DISPENSER_RUN_TICKS     10000u // 10 seconds on the 1 kHz Timer2
+#define DISPENSER_DUTY          100u
+#define DISPENSER_RUN_TICKS     3400u // 3.4 seconds on the 1 kHz Timer2
 
 #define OC_PPS_CODE          0b0101       // RPB15R = OC1; RPB11R = OC2
 #define DING_TIME_MS 400u
@@ -93,7 +90,7 @@ static void plateOff(FollowState next, uint16_t now);
 static void failPlate(const char *reason, uint16_t now);
 static unsigned scaledPot(uint16_t pot, unsigned fullScale);
 static int32_t targetFromPot(uint16_t pot);
-static void requestDirection(int sign, uint16_t now);
+static void requestDirection(int sign);
 
 /*---------------------------- Module Variables ---------------------------*/
 static uint8_t MyPriority;
@@ -112,13 +109,11 @@ static const char *const followNames[] = {
 };
 static const char *followReason = "none";
 
-static volatile uint8_t pwmTicksLeft;
-static volatile bool pwmTimedOut;
-
-static uint16_t offSince, requestSince, progressSince, driveSince;
+static uint16_t offSince;
 static uint16_t directionRequest;
-static int32_t previousPosition, progressPosition;
+static int32_t previousPosition, driveStartPosition;
 static int driveSign;
+static bool movementSeen;
 
 static bool BellOn = false;
 static uint16_t BellStarted;
@@ -138,11 +133,9 @@ static void updatePlate(uint16_t now)
         return;
     }
 
-    uint16_t pot;
-    if (!TryGetPotReading(&pot)) {
-        if (followState != Pickup) {
-            failPlate("pot sample stale", now);
-        }
+    uint16_t pot = GetPotReading();
+    // Wait for a valid first sample so a new game starts without a jump.
+    if (followState == Pickup && !referenceAligned && !TryGetPotReading(&pot)) {
         return;
     }
 
@@ -158,13 +151,12 @@ static void updatePlate(uint16_t now)
             IEC0CLR = _IEC0_INT1IE_MASK;
             encoderCount = startPosition;
             previousPosition = startPosition;
-            progressPosition = startPosition;
             IEC0SET = encoderEnabled;
 
             referenceAligned = true;
             offSince = now;
             plateOff(Holding, now);
-        } else if (distance <= RESTART_BAND_COUNTS) {
+        } else {
             followState = Holding;
         }
         return;
@@ -180,9 +172,9 @@ static void updatePlate(uint16_t now)
     int sign = (error > 0) ? 1 : -1;
 
     if (followState == AwaitDirection && sign == driveSign) {
-        if ((uint16_t)(now - requestSince) >= 150u) {
-            failPlate("595 timeout", now);
-        }
+        // Retry the same request until the direction has been written.
+        ES_Event_t command = { ES_CHAIN_SET_MOTOR_DIR, directionRequest };
+        (void)PostDisplayChainService(command);
         return;
     }
 
@@ -192,36 +184,16 @@ static void updatePlate(uint16_t now)
         plateOff(Coasting, now);
 
         if ((uint16_t)(now - offSince) >= COAST_MS) {
-            requestDirection(sign, now);
+            requestDirection(sign);
         }
         return;
     }
 
     if (CurrentDuty == 0u) {
-        driveSince = now;
-        progressSince = now;
-        progressPosition = position;
-    } else {
-        int64_t progress = sign * ((int64_t)position - progressPosition);
-
-        if (progress <= -4) {
-            failPlate("wrong direction", now);
-            return;
-        }
-
-        if (progress >= 2) {
-            progressPosition = position;
-            progressSince = now;
-        }
-
-        if ((uint16_t)(now - progressSince) >= NO_PROGRESS_MS) {
-            failPlate("no encoder progress", now);
-            return;
-        }
-        if ((uint16_t)(now - driveSince) >= MAX_DRIVE_MS) {
-            failPlate("drive timeout", now);
-            return;
-        }
+        driveStartPosition = position;
+        movementSeen = false;
+    } else if (sign * ((int64_t)position - driveStartPosition) >= 2) {
+        movementSeen = true;
     }
 
     // Request less PWM near the target and ramp up gradually.
@@ -229,7 +201,7 @@ static void updatePlate(uint16_t now)
     unsigned duty = FOLLOW_MIN_DUTY +
                 scale * (FOLLOW_RUN_MAX_DUTY - FOLLOW_MIN_DUTY) / 90u;
     // Ramp toward the maximum until the encoder confirms movement.
-    if (progressSince == driveSince) {
+    if (!movementSeen) {
         duty = FOLLOW_MAX_DUTY;
     }
     if (duty > CurrentDuty + FOLLOW_DUTY_STEP) {
@@ -239,14 +211,10 @@ static void updatePlate(uint16_t now)
     setPlateDuty((uint8_t)duty);
 }
 
-void __ISR(_TIMER_2_VECTOR, IPL2SOFT) PlatePwmTimeoutISR(void)
+void __ISR(_TIMER_2_VECTOR, IPL2SOFT) ActuatorTimerISR(void)
 {
     IFS0CLR = _IFS0_T2IF_MASK;
 
-    if (pwmTicksLeft != 0u && --pwmTicksLeft == 0u) {
-        OC1RS = 0;
-        pwmTimedOut = true;
-    }
     if (dispenserTicksLeft != 0u && --dispenserTicksLeft == 0u) {
         OC2RS = 0;
     }
@@ -265,10 +233,9 @@ static void failPlate(const char *reason, uint16_t now)
 {
     uint8_t duty = CurrentDuty;
     plateOff(PlateFault, now);
-    DB_printf("Plate fault: %s; count=%d target=%d duty=%u progress_ms=%u drive_ms=%u\n",
+    DB_printf("Plate fault: %s; count=%d target=%d duty=%u\n",
               reason, (int)encoderCount, (int)targetFromPot(GetPotReading()),
-              (unsigned)duty, (unsigned)(uint16_t)(now - progressSince),
-              (unsigned)(uint16_t)(now - driveSince));
+              (unsigned)duty);
     followReason = reason;
 }
 
@@ -287,7 +254,7 @@ static int32_t targetFromPot(uint16_t pot)
     return COUNTS_PER_CLOCKWISE_REV > 0 ? counts : -counts;
 }
 
-static void requestDirection(int sign, uint16_t now)
+static void requestDirection(int sign)
 {
     // Number each request so an old reply cannot start the motor.
     uint8_t tag = (uint8_t)((directionRequest >> 8) + 1u);
@@ -300,12 +267,10 @@ static void requestDirection(int sign, uint16_t now)
 
     ES_Event_t command = { ES_CHAIN_SET_MOTOR_DIR, directionRequest };
     if (!PostDisplayChainService(command)) {
-        failPlate("595 queue full", now);
-        return;
+        return; // Try again on the next control tick.
     }
 
     driveSign = sign;
-    requestSince = now;
     followState = AwaitDirection;
 }
 
@@ -371,8 +336,8 @@ bool InitActuatorService(uint8_t Priority)
     IPC2bits.T2IS = 0;
     IFS0CLR = _IFS0_T2IF_MASK;
 
-    pwmTicksLeft = 0;
-    pwmTimedOut = false;
+    movementSeen = false;
+    driveStartPosition = encoderCount;
     CurrentDuty = 0;
     previousPosition = encoderCount;
     offSince = ES_Timer_GetTime();
@@ -409,10 +374,6 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
         BellOn = false;
     }
 }
-
-    if (pwmTimedOut && followState != PlateFault) {
-        failPlate("control timeout", now);
-    }
 
     if (ThisEvent.EventType == ES_INIT) {
         if (INT1R != 2u || RPB15R != OC_PPS_CODE) {
@@ -451,7 +412,7 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
         if (!gameActive && dispenserReady) {
             dispenserReady = false;
             setDispenser(true);
-            DB_printf("Dispenser: start 10 s at %u%%; ENA map=%u OC2=0x%x PWM=%u ticks=%u\n",
+            DB_printf("Dispenser: start 3.4 s at %u%%; ENA map=%u OC2=0x%x PWM=%u ticks=%u\n",
                       (unsigned)DISPENSER_DUTY, (unsigned)RPB11R,
                       (unsigned)OC2CON, (unsigned)OC2RS,
                       (unsigned)dispenserTicksLeft);
@@ -471,11 +432,7 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
     else if (ThisEvent.EventType == ES_CHAIN_SET_MOTOR_DIR && gameActive &&
              followState == AwaitDirection &&
              ThisEvent.EventParam == directionRequest) {
-        if ((uint16_t)(now - requestSince) >= 150u) {
-            failPlate("late 595 reply", now);
-        } else {
-            followState = Driving;
-        }
+        followState = Driving;
     }
     else if (ThisEvent.EventType == ES_NEW_KEY) {
         switch (ThisEvent.EventParam) {
@@ -492,7 +449,6 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
             case 'a':
                 if (gameActive && (followState == Paused || followState == PlateFault)) {
                     plateOff(Pickup, now);
-                    pwmTimedOut = false;
                     followReason = "none";
 
                     if (INT1R != 2u || RPB15R != OC_PPS_CODE) {
@@ -518,7 +474,7 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
                           a, b, (int)count, (unsigned)pot, targetDeg, plateDeg);
                 DB_printf("mode=%s duty=%u reason=%s game=%s dispenser=%s\n",
                           followNames[followState],
-                          (unsigned)(pwmTimedOut ? 0u : CurrentDuty),
+                          (unsigned)CurrentDuty,
                           followReason, gameActive ? "on" : "off",
                           dispenserTicksLeft != 0u ? "on" : "off");
                 break;
@@ -537,17 +493,12 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
  ***************************************************************************/
 static void setPlateDuty(uint8_t duty)
 {
-    IEC0CLR = _IEC0_T2IE_MASK;
-
-    if (!gameActive || pwmTimedOut) {
+    if (!gameActive) {
         duty = 0;
     }
 
     OC1RS = DUTY_TO_OCRS(duty);
     CurrentDuty = duty;
-    pwmTicksLeft = duty != 0u ? PWM_TIMEOUT_TICKS : 0u;
-
-    IEC0SET = _IEC0_T2IE_MASK;
 }
 
 static void setDispenser(bool running)

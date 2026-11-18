@@ -123,7 +123,7 @@ bool Check4Keystroke(void)
 
 /***************************************************************************
  Input helpers (pins from the schematic)
-   30s button RA2 (pin 9), 45s button RA3 (pin 10), 60s button RA4 (pin 12).
+   45s button RA2 (pin 9), 60s button RA3 (pin 10), 75s button RA4 (pin 12).
    Each button connects its pin to ground, so the internal pull-ups are on
    and a pressed button reads 0.
    The food start-spot Hall sensor (RB13 / AN11) is read in AnalogInputs.c.
@@ -147,9 +147,9 @@ static bool readFoodSensor(void)
 static uint8_t readTimeButtons(void)
 {
   uint8_t Pressed = 0;
-  if (!PORTAbits.RA2) Pressed |= 0x01;   // 30 s
-  if (!PORTAbits.RA3) Pressed |= 0x02;   // 45 s
-  if (!PORTAbits.RA4) Pressed |= 0x04;   // 60 s
+  if (!PORTAbits.RA2) Pressed |= 0x01;   // 45 s
+  if (!PORTAbits.RA3) Pressed |= 0x02;   // 60 s
+  if (!PORTAbits.RA4) Pressed |= 0x04;   // 75 s
   return Pressed;
 }
 
@@ -188,8 +188,8 @@ bool Check4FoodSensor(void)
    Check4TimeButtons
  Description
    Debounces the three time buttons and posts ES_TIME_SELECTED to GameService
-   with EventParam = the button number (1, 2 or 3). That number is also the
-   difficulty. Owner: game-logic.
+   with EventParam = difficulty: 1 = 75s/easy, 2 = 60s/medium, 3 = 45s/hard.
+   Owner: game-logic.
 ****************************************************************************/
 bool Check4TimeButtons(void)
 {
@@ -213,7 +213,7 @@ bool Check4TimeButtons(void)
     {
       ES_Event_t ThisEvent;
       ThisEvent.EventType = ES_TIME_SELECTED;
-      ThisEvent.EventParam = (NewlyPressed & 0x01) ? 1 : ((NewlyPressed & 0x02) ? 2 : 3);
+      ThisEvent.EventParam = (NewlyPressed & 0x01) ? 3 : ((NewlyPressed & 0x02) ? 2 : 1);
       PostGameService(ThisEvent);
       ReturnVal = true;
     }
