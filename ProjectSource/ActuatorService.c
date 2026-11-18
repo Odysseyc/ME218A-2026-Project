@@ -12,7 +12,7 @@
      Encoder A RB0 / pin 4; encoder B RB1 / pin 5
      Pot       RB12 / pin 23, read by AnalogInputs
    Dispenser (L298N channel A): ENA RB11 / pin 22, OC2 PWM;
-     IN1 = 3.3 V, IN2 = GND. Runs for 3.4 seconds after a win.
+     IN1 = 3.3 V, IN2 = GND. Runs for 3.5 seconds after a win.
 
  Notes
    Follows the knob only during a game; aligns without moving at each start.
@@ -70,7 +70,7 @@
 #define COAST_MS                60u
 
 #define DISPENSER_DUTY          100u
-#define DISPENSER_RUN_TICKS     3400u // 3.4 seconds on the 1 kHz Timer2
+#define DISPENSER_RUN_TICKS     3500u // 3.5 seconds on the 1 kHz Timer2
 
 #define OC_PPS_CODE          0b0101       // RPB15R = OC1; RPB11R = OC2
 #define DING_TIME_MS 400u
@@ -412,7 +412,7 @@ ES_Event_t RunActuatorService(ES_Event_t ThisEvent)
         if (!gameActive && dispenserReady) {
             dispenserReady = false;
             setDispenser(true);
-            DB_printf("Dispenser: start 3.4 s at %u%%; ENA map=%u OC2=0x%x PWM=%u ticks=%u\n",
+            DB_printf("Dispenser: start 3.5 s at %u%%; ENA map=%u OC2=0x%x PWM=%u ticks=%u\n",
                       (unsigned)DISPENSER_DUTY, (unsigned)RPB11R,
                       (unsigned)OC2CON, (unsigned)OC2RS,
                       (unsigned)dispenserTicksLeft);
